@@ -1,0 +1,28 @@
+{
+  "name": "phase17_golden_grounding",
+  "cases": [
+    {
+      "id": "citation-accuracy",
+      "query": "What is required for citation accuracy?",
+      "expectedTerms": ["citation", "accuracy", "90"],
+      "expectedSourceIds": ["src-001"]
+    },
+    {
+      "id": "hybrid-retrieval",
+      "query": "How should RAG retrieval work?",
+      "expectedTerms": ["hybrid", "retrieval", "bm25"],
+      "expectedSourceIds": ["src-002"]
+    },
+    {
+      "id": "safety-evaluation",
+      "query": "What safety evaluation is required before production?",
+      "expectedTerms": ["safety", "evaluation", "production"],
+      "expectedSourceIds": ["src-001"]
+    }
+  ],
+  "syntheticCases": {
+    "unsupportedClaim": "The wiki says every model is quantum-safe by default.",
+    "conflictSignal": "Conflict: one source says citation accuracy must exceed 90 percent while another says citations are optional.",
+    "staleSignal": "An authoritative source older than six months should trigger stale-source review."
+  }
+}

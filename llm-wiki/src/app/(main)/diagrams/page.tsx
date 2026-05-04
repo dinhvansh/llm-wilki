@@ -1,0 +1,129 @@
+'use client'
+import Link from 'next/link'
+import { useState } from 'react'
+import { GitBranch, Plus, Search } from 'lucide-react'
+
+import { EmptyState } from '@/components/data-display/empty-state'
+import { ErrorState } from '@/components/data-display/error-state'
+import { LoadingSpinner } from '@/components/data-display/loading-spinner'
+import { StatusBadge } from '@/components/data-display/status-badge'
+import { PageHeader } from '@/components/layout/page-header'
+import { Input } from '@/components/ui/input'
+import { useCollections } from '@/hooks/use-collections'
+import { useCreateDiagram, useDiagrams } from '@/hooks/use-diagrams'
+import { formatRelativeTime } from '@/lib/utils'
+
+export default function DiagramsPage() {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [collectionFilter, setCollectionFilter] = useState('')
+  const { data, isLoading, isError, error, refetch } = useDiagrams({
+    search: search || undefined,
+    status: statusFilter || undefined,
+    collectionId: collectionFilter || undefined,
+  })
+  const { data: collections } = useCollections()
+  const createMutation = useCreateDiagram()
+
+  const diagrams = data?.data ?? []
+
+  return (
+    <div>
+      <PageHeader
+        title="Process Diagrams"
+        description="Manage BPM-oriented diagram drafts backed by self-hosted draw.io artifacts."
+        actions={
+          <button
+            onClick={() => {
+              const title = window.prompt('Diagram title')
+              if (!title?.trim()) return
+              createMutation.mutate({
+                title: title.trim(),
+                objective: 'New BPM process draft',
+                actorLanes: ['Editor', 'Reviewer', 'System'],
+                entryPoints: ['Start'],
+                exitPoints: ['Done'],
+                specJson: { title: title.trim(), actors: [], nodes: [], edges: [] },
+              })
+            }}
+            disabled={createMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" />
+            {createMutation.isPending ? 'Creating...' : 'New Diagram'}
+          </button>
+        }
+      />
+
+      <div className="p-6 space-y-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search diagrams..."
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              className="pl-8 h-9"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={event => setStatusFilter(event.target.value)}
+            className="h-9 px-3 text-sm border border-input bg-background rounded-md"
+          >
+            <option value="">All Status</option>
+            <option value="draft">Draft</option>
+            <option value="published">Published</option>
+          </select>
+          <select
+            value={collectionFilter}
+            onChange={event => setCollectionFilter(event.target.value)}
+            className="h-9 px-3 text-sm border border-input bg-background rounded-md"
+          >
+            <option value="">All Collections</option>
+            <option value="standalone">Standalone</option>
+            {collections?.map(collection => (
+              <option key={collection.id} value={collection.id}>{collection.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {isLoading ? <LoadingSpinner label="Loading diagrams..." /> :
+         isError ? <ErrorState message={(error as Error)?.message ?? 'Failed to load diagrams'} onRetry={() => refetch()} /> :
+         diagrams.length === 0 ? (
+           <EmptyState
+             icon="file-text"
+             title="No diagrams yet"
+             description="Create BPM process diagrams from your source material and keep draw.io XML inside the platform."
+           />
+         ) : (
+           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+             {diagrams.map(diagram => (
+               <Link
+                 key={diagram.id}
+                 href={`/diagrams/${diagram.slug}`}
+                 className="bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors group"
+               >
+                 <div className="flex items-start justify-between mb-2">
+                   <StatusBadge status={diagram.status} type="page" />
+                   <span className="text-xs text-muted-foreground">v{diagram.currentVersion}</span>
+                 </div>
+                 <div className="flex items-center gap-2 mb-2">
+                   <GitBranch className="w-4 h-4 text-primary" />
+                   <h3 className="font-semibold text-sm group-hover:text-primary transition-colors">{diagram.title}</h3>
+                 </div>
+                 <p className="text-xs text-muted-foreground line-clamp-3 mb-3">{diagram.objective || 'No objective yet.'}</p>
+                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span>{diagram.actorLanes.length} lanes</span>
+                    <span>{diagram.sourceIds.length} sources</span>
+                    <span>{diagram.relatedDiagramIds.length} related</span>
+                    <span>{formatRelativeTime(diagram.updatedAt)}</span>
+                  </div>
+               </Link>
+             ))}
+           </div>
+         )}
+      </div>
+    </div>
+  )
+}

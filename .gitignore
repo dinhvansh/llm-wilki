@@ -1,0 +1,47 @@
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Frontend build artifacts
+node_modules/
+.next/
+out/
+dist/
+
+# Local uploads / temp artifacts
+backend/uploads/
+backend/app/uploads/
+
+# Archives / exports / backups
+*.zip
+*.tar
+*.gz
+
+# Coverage
+coverage/
+htmlcov/

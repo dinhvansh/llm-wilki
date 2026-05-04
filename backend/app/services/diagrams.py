@@ -1,0 +1,1086 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from html import escape
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from app.core.ingest import json_like_to_dict
+from app.core.llm_client import llm_client
+from app.core.runtime_config import load_runtime_snapshot
+from app.models import Claim, Diagram, DiagramVersion, Page, PageSourceLink, Source, SourceChunk
+from app.services.audit import create_audit_log, list_audit_logs
+
+
+def _iso(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def slugify(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value.strip())
+    parts = [part for part in cleaned.split("-") if part]
+    return "-".join(parts)[:80] or f"diagram-{uuid4().hex[:6]}"
+
+
+def _unique_slug(db: Session, base_slug: str, diagram_id: str | None = None) -> str:
+    slug = base_slug
+    counter = 2
+    while True:
+        query = db.query(Diagram).filter(Diagram.slug == slug)
+        if diagram_id:
+            query = query.filter(Diagram.id != diagram_id)
+        if not query.first():
+            return slug
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+
+def _diagram_page_summaries(db: Session, page_ids: list[str]) -> list[dict]:
+    if not page_ids:
+        return []
+    rows = db.query(Page).filter(Page.id.in_(page_ids)).all()
+    by_id = {row.id: row for row in rows}
+    return [
+        {"id": page_id, "slug": by_id[page_id].slug, "title": by_id[page_id].title, "status": by_id[page_id].status}
+        for page_id in page_ids
+        if page_id in by_id
+    ]
+
+
+def _diagram_source_summaries(db: Session, source_ids: list[str]) -> list[dict]:
+    if not source_ids:
+        return []
+    rows = db.query(Source).filter(Source.id.in_(source_ids)).all()
+    by_id = {row.id: row for row in rows}
+    return [
+        {"id": source_id, "title": by_id[source_id].title, "sourceType": by_id[source_id].source_type, "parseStatus": by_id[source_id].parse_status}
+        for source_id in source_ids
+        if source_id in by_id
+    ]
+
+
+def _related_diagram_summaries(db: Session, diagram_ids: list[str]) -> list[dict]:
+    if not diagram_ids:
+        return []
+    rows = db.query(Diagram).filter(Diagram.id.in_(diagram_ids)).all()
+    by_id = {row.id: row for row in rows}
+    return [
+        {"id": diagram_id, "slug": by_id[diagram_id].slug, "title": by_id[diagram_id].title, "status": by_id[diagram_id].status}
+        for diagram_id in diagram_ids
+        if diagram_id in by_id
+    ]
+
+
+def serialize_diagram(record: Diagram, db: Session | None = None) -> dict:
+    source_page_ids = record.source_page_ids or []
+    source_ids = record.source_ids or []
+    related_diagram_ids = record.related_diagram_ids or []
+    return {
+        "id": record.id,
+        "slug": record.slug,
+        "title": record.title,
+        "objective": record.objective or "",
+        "notation": record.notation,
+        "status": record.status,
+        "owner": record.owner,
+        "collectionId": record.collection_id,
+        "currentVersion": record.current_version,
+        "drawioXml": record.drawio_xml or "",
+        "specJson": record.spec_json or {},
+        "sourcePageIds": source_page_ids,
+        "sourceIds": source_ids,
+        "actorLanes": record.actor_lanes or [],
+        "entryPoints": record.entry_points or [],
+        "exitPoints": record.exit_points or [],
+        "relatedDiagramIds": related_diagram_ids,
+        "relatedDiagrams": _related_diagram_summaries(db, related_diagram_ids) if db else [],
+        "linkedPages": _diagram_page_summaries(db, source_page_ids) if db else [],
+        "linkedSources": _diagram_source_summaries(db, source_ids) if db else [],
+        "createdAt": _iso(record.created_at),
+        "updatedAt": _iso(record.updated_at),
+        "publishedAt": _iso(record.published_at),
+    }
+
+
+def serialize_diagram_version(record: DiagramVersion) -> dict:
+    return {
+        "id": record.id,
+        "diagramId": record.diagram_id,
+        "versionNo": record.version_no,
+        "drawioXml": record.drawio_xml or "",
+        "specJson": record.spec_json or {},
+        "changeSummary": record.change_summary or "",
+        "createdAt": _iso(record.created_at),
+        "createdByAgentOrUser": record.created_by_agent_or_user,
+    }
+
+
+def _normalize_owner(label: str) -> str:
+    value = re.sub(r"\s+", " ", (label or "").strip())
+    return value[:80]
+
+
+def _node_id(prefix: str, index: int) -> str:
+    return f"{prefix}-{index + 1}"
+
+
+def _actor_id(label: str) -> str:
+    base = slugify(label).replace("-", "_")
+    return base or f"actor_{uuid4().hex[:6]}"
+
+
+def _extract_step_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    lines = [line.strip(" -*\t") for line in text.splitlines() if line.strip()]
+    numbered_re = re.compile(r"^\d+[\.\)]\s+")
+    for raw_line in lines:
+        line = numbered_re.sub("", raw_line).strip()
+        if len(line) < 12:
+            continue
+        if raw_line[:1] in {"-", "*"} or numbered_re.match(raw_line):
+            candidates.append(line[:220])
+    if candidates:
+        return candidates[:10]
+
+    sentence_re = re.compile(r"(?<=[.!?])\s+")
+    sentences = [part.strip() for part in sentence_re.split(text) if len(part.strip()) > 20]
+    return sentences[:8]
+
+
+def _extract_actor_candidates(text: str, owner: str | None = None) -> list[str]:
+    actor_patterns = [
+        re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:must|should|will|can|reviews?|approves?|submits?|creates?|publishes?|updates?|checks?|verifies?)\b"),
+        re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\s*:\s"),
+    ]
+    actors: list[str] = []
+    for pattern in actor_patterns:
+        for match in pattern.finditer(text):
+            candidate = _normalize_owner(match.group(1))
+            if candidate and candidate not in actors:
+                actors.append(candidate)
+    if owner:
+        normalized_owner = _normalize_owner(owner)
+        if normalized_owner and normalized_owner not in actors:
+            actors.insert(0, normalized_owner)
+    if "System" not in actors:
+        actors.append("System")
+    return actors[:5]
+
+
+def _pick_owner(step: str, actors: list[str], fallback_owner: str) -> str:
+    lowered = step.lower()
+    for actor in actors:
+        if actor.lower() in lowered:
+            return actor
+    return fallback_owner or (actors[0] if actors else "System")
+
+
+def _build_heuristic_generation(*, title: str, objective: str, text: str, owner: str | None, citations: list[dict]) -> dict:
+    step_candidates = _extract_step_candidates(text)
+    actors = _extract_actor_candidates(text, owner=owner)
+    primary_owner = actors[0] if actors else "System"
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    main_flow: list[dict] = []
+    decision_points: list[dict] = []
+    exception_flow: list[dict] = []
+    open_questions: list[str] = []
+
+    start_label = objective.strip() or "Process starts"
+    nodes.append({"id": "start", "type": "start", "label": start_label[:100], "owner": primary_owner})
+    previous_node_id = "start"
+
+    if not step_candidates:
+        step_candidates = ["Review source material and define the first operational step."]
+        open_questions.append("Tai lieu chua neu ro cac buoc xu ly chinh; can bo sung main flow.")
+
+    for index, step in enumerate(step_candidates[:6]):
+        owner_label = _pick_owner(step, actors, primary_owner)
+        normalized_step = re.sub(r"\s+", " ", step).strip()[:160]
+        is_decision = bool(re.search(r"\b(if|whether|approve|approved|reject|rejected|pass|fail)\b|\?", normalized_step, re.IGNORECASE))
+        node_type = "decision" if is_decision else "task"
+        node_id = _node_id("decision" if is_decision else "task", index)
+        nodes.append({"id": node_id, "type": node_type, "label": normalized_step, "owner": owner_label})
+        edges.append({"from": previous_node_id, "to": node_id})
+        main_flow.append({"nodeId": node_id, "label": normalized_step, "owner": owner_label})
+        if is_decision:
+            approve_node_id = f"{node_id}-approve"
+            reject_node_id = f"{node_id}-reject"
+            nodes.append({"id": approve_node_id, "type": "task", "label": "Continue approved path", "owner": "System"})
+            nodes.append({"id": reject_node_id, "type": "task", "label": "Return for exception handling", "owner": owner_label})
+            edges.append({"from": node_id, "to": approve_node_id, "label": "Approve"})
+            edges.append({"from": node_id, "to": reject_node_id, "label": "Reject"})
+            decision_points.append({"nodeId": node_id, "label": normalized_step, "branches": ["Approve", "Reject"]})
+            exception_flow.append({"nodeId": reject_node_id, "label": "Return for exception handling", "owner": owner_label})
+            previous_node_id = approve_node_id
+        else:
+            previous_node_id = node_id
+
+    end_node_id = "end"
+    end_label = "Completed"
+    if exception_flow:
+        end_label = "Completed or returned for rework"
+    nodes.append({"id": end_node_id, "type": "end", "label": end_label, "owner": "System"})
+    edges.append({"from": previous_node_id, "to": end_node_id})
+
+    if len(actors) <= 1:
+        open_questions.append("Chua xac dinh ro actor/owner cho tung buoc; can reviewer xac nhan lanes.")
+    if not decision_points:
+        open_questions.append("Tai lieu chua the hien decision point ro rang; can xac nhan co reject/escalation path hay khong.")
+    if not exception_flow:
+        open_questions.append("Tai lieu chua mo ta exception path; can bo sung khi co retry/reject/escalation.")
+
+    return {
+        "scopeSummary": objective.strip() or f"BPM draft extracted from {title}.",
+        "actors": [{"id": _actor_id(actor), "label": actor} for actor in actors],
+        "nodes": nodes,
+        "edges": edges,
+        "mainFlow": main_flow,
+        "decisionPoints": decision_points,
+        "exceptionFlow": exception_flow,
+        "openQuestions": open_questions[:5],
+        "citations": citations[:12],
+        "generation": {"mode": "heuristic"},
+    }
+
+
+def _build_llm_generation(*, title: str, objective: str, text: str, owner: str | None, citations: list[dict], source_kind: str) -> dict | None:
+    runtime = load_runtime_snapshot()
+    bpm_profile = runtime.profile_for_task("bpm_generation")
+    if not llm_client.is_enabled(bpm_profile):
+        return None
+
+    system_prompt = (
+        "You convert internal business documents into BPM draft JSON. "
+        "Return strict JSON only. "
+        "Do not invent actors, decisions, or exception paths when the document is ambiguous. "
+        "Use openQuestions for missing or ambiguous business logic. "
+        "Output keys: scopeSummary, actors, steps, decisions, exceptionFlow, openQuestions."
+    )
+    user_prompt = (
+        f"Source kind: {source_kind}\n"
+        f"Title: {title}\n"
+        f"Objective: {objective}\n"
+        f"Default owner: {owner or 'Unknown'}\n\n"
+        "Document excerpt:\n"
+        f"{text[:12000]}"
+    )
+    response = llm_client.complete(bpm_profile, system_prompt, user_prompt)
+    if not response:
+        return None
+
+    try:
+        payload = json_like_to_dict(response)
+    except Exception:
+        return None
+
+    actor_labels = []
+    for item in payload.get("actors", []):
+        if isinstance(item, dict):
+            label = _normalize_owner(str(item.get("label") or item.get("name") or ""))
+        else:
+            label = _normalize_owner(str(item))
+        if label and label not in actor_labels:
+            actor_labels.append(label)
+    if owner and _normalize_owner(owner) not in actor_labels:
+        actor_labels.insert(0, _normalize_owner(owner))
+    if not actor_labels:
+        actor_labels = _extract_actor_candidates(text, owner=owner)
+
+    nodes: list[dict] = [{"id": "start", "type": "start", "label": (objective.strip() or "Process starts")[:100], "owner": actor_labels[0] if actor_labels else "System"}]
+    edges: list[dict] = []
+    main_flow: list[dict] = []
+    previous_node_id = "start"
+
+    steps = payload.get("steps", [])
+    for index, item in enumerate(steps[:8]):
+        if isinstance(item, dict):
+            label = re.sub(r"\s+", " ", str(item.get("label") or item.get("step") or "")).strip()
+            step_owner = _normalize_owner(str(item.get("owner") or "")) or _pick_owner(label, actor_labels, actor_labels[0] if actor_labels else "System")
+        else:
+            label = re.sub(r"\s+", " ", str(item)).strip()
+            step_owner = _pick_owner(label, actor_labels, actor_labels[0] if actor_labels else "System")
+        if not label:
+            continue
+        node_id = _node_id("task", index)
+        nodes.append({"id": node_id, "type": "task", "label": label[:160], "owner": step_owner})
+        edges.append({"from": previous_node_id, "to": node_id})
+        main_flow.append({"nodeId": node_id, "label": label[:160], "owner": step_owner})
+        previous_node_id = node_id
+
+    decision_points: list[dict] = []
+    exception_flow: list[dict] = []
+    for index, item in enumerate(payload.get("decisions", [])[:3]):
+        if isinstance(item, dict):
+            label = re.sub(r"\s+", " ", str(item.get("label") or item.get("question") or "")).strip()
+            branches = [str(branch).strip() for branch in item.get("branches", []) if str(branch).strip()]
+            owner_label = _normalize_owner(str(item.get("owner") or "")) or (actor_labels[0] if actor_labels else "System")
+        else:
+            label = re.sub(r"\s+", " ", str(item)).strip()
+            branches = ["Yes", "No"]
+            owner_label = actor_labels[0] if actor_labels else "System"
+        if not label:
+            continue
+        node_id = _node_id("decision", index)
+        nodes.append({"id": node_id, "type": "decision", "label": label[:160], "owner": owner_label})
+        edges.append({"from": previous_node_id, "to": node_id})
+        decision_points.append({"nodeId": node_id, "label": label[:160], "branches": branches or ["Yes", "No"]})
+        for branch_index, branch in enumerate((branches or ["Yes", "No"])[:2]):
+            branch_node_id = f"{node_id}-branch-{branch_index + 1}"
+            nodes.append({"id": branch_node_id, "type": "task", "label": f"{branch} path", "owner": owner_label})
+            edges.append({"from": node_id, "to": branch_node_id, "label": branch})
+            if branch_index == 1:
+                exception_flow.append({"nodeId": branch_node_id, "label": f"{branch} path", "owner": owner_label})
+        previous_node_id = f"{node_id}-branch-1"
+
+    nodes.append({"id": "end", "type": "end", "label": "Completed", "owner": "System"})
+    edges.append({"from": previous_node_id, "to": "end"})
+
+    open_questions = [str(item).strip() for item in payload.get("openQuestions", []) if str(item).strip()]
+    return {
+        "scopeSummary": str(payload.get("scopeSummary") or objective or f"BPM draft extracted from {title}.").strip(),
+        "actors": [{"id": _actor_id(actor), "label": actor} for actor in actor_labels[:5]],
+        "nodes": nodes,
+        "edges": edges,
+        "mainFlow": main_flow,
+        "decisionPoints": decision_points,
+        "exceptionFlow": exception_flow,
+        "openQuestions": open_questions[:6],
+        "citations": citations[:12],
+        "generation": {"mode": "llm", "provider": bpm_profile.provider, "model": bpm_profile.model},
+    }
+
+
+def _validate_generated_spec(spec_json: dict) -> dict:
+    warnings: list[str] = []
+    nodes = spec_json.get("nodes", [])
+    edges = spec_json.get("edges", [])
+    node_by_id = {str(node.get("id")): node for node in nodes if isinstance(node, dict) and node.get("id")}
+
+    actor_labels = {str(actor.get("label")).strip() for actor in spec_json.get("actors", []) if isinstance(actor, dict) and str(actor.get("label")).strip()}
+    decision_nodes = [node for node in nodes if isinstance(node, dict) and node.get("type") == "decision"]
+    exception_flow = spec_json.get("exceptionFlow", [])
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") in {"task", "decision", "handoff", "subprocess"}:
+            owner = str(node.get("owner") or "").strip()
+            if not owner:
+                warnings.append(f"Node `{node.get('id')}` is missing owner.")
+            elif actor_labels and owner not in actor_labels and owner != "System":
+                warnings.append(f"Node `{node.get('id')}` owner `{owner}` is not declared in actor lanes.")
+        if node.get("type") == "decision":
+            label = str(node.get("label") or "").strip()
+            if "?" not in label and not re.search(r"\b(approve|reject|valid|eligible|complete|pass|fail|whether)\b", label, re.IGNORECASE):
+                warnings.append(f"Decision `{node.get('id')}` label should read like a branching question or decision.")
+
+    for decision in decision_nodes:
+        branch_count = sum(1 for edge in edges if isinstance(edge, dict) and edge.get("from") == decision.get("id"))
+        if branch_count < 2:
+            warnings.append(f"Decision `{decision.get('id')}` should have at least two outgoing branches.")
+
+    if not exception_flow:
+        warnings.append("Diagram does not contain an explicit exception path.")
+
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("from") not in node_by_id or edge.get("to") not in node_by_id:
+            warnings.append(f"Edge `{edge}` points to a missing node.")
+
+    return {"isValid": len(warnings) == 0, "warnings": warnings}
+
+
+def _style_for_node(node_type: str) -> str:
+    if node_type == "start":
+        return "ellipse;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;"
+    if node_type == "end":
+        return "ellipse;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;"
+    if node_type == "decision":
+        return "rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;"
+    if node_type == "handoff":
+        return "shape=hexagon;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;"
+    return "rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#475569;"
+
+
+def _drawio_xml_from_spec(spec_json: dict) -> str:
+    actors = [actor.get("label") for actor in spec_json.get("actors", []) if isinstance(actor, dict) and actor.get("label")]
+    actor_x = {label: 40 + index * 260 for index, label in enumerate(actors)}
+    nodes = [node for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("id")]
+    node_y: dict[str, int] = {}
+    for index, node in enumerate(nodes):
+        node_y[str(node.get("id"))] = 40 + index * 110
+
+    xml_parts = [
+        '<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">',
+        "<root>",
+        '<mxCell id="0" />',
+        '<mxCell id="1" parent="0" />',
+    ]
+
+    for node in nodes:
+        node_id = escape(str(node.get("id")))
+        owner = str(node.get("owner") or (actors[0] if actors else "System"))
+        x = actor_x.get(owner, 40)
+        y = node_y[str(node.get("id"))]
+        label = escape(str(node.get("label") or ""))
+        style = _style_for_node(str(node.get("type") or "task"))
+        xml_parts.append(
+            f'<mxCell id="{node_id}" value="{label}" style="{style}" vertex="1" parent="1"><mxGeometry x="{x}" y="{y}" width="180" height="70" as="geometry" /></mxCell>'
+        )
+
+    for index, edge in enumerate(spec_json.get("edges", [])):
+        if not isinstance(edge, dict):
+            continue
+        source = escape(str(edge.get("from") or ""))
+        target = escape(str(edge.get("to") or ""))
+        if not source or not target:
+            continue
+        label = escape(str(edge.get("label") or ""))
+        xml_parts.append(
+            f'<mxCell id="edge-{index + 1}" value="{label}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="{source}" target="{target}"><mxGeometry relative="1" as="geometry" /></mxCell>'
+        )
+
+    xml_parts.append("</root></mxGraphModel>")
+    return "".join(xml_parts)
+
+
+def _ensure_traceability_fields(spec_json: dict) -> dict:
+    nodes = [node for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("id")]
+    citations = [item for item in spec_json.get("citations", []) if isinstance(item, dict)]
+    if citations and not spec_json.get("nodeCitations"):
+        node_citations = []
+        for index, node in enumerate(nodes):
+            citation = citations[min(index, len(citations) - 1)]
+            node_citations.append({"nodeId": node.get("id"), "citation": citation})
+        spec_json["nodeCitations"] = node_citations
+    if not spec_json.get("edgeCitations"):
+        edge_citations = []
+        for edge in [item for item in spec_json.get("edges", []) if isinstance(item, dict)]:
+            matched = next((item for item in spec_json.get("nodeCitations", []) if item.get("nodeId") == edge.get("to")), None)
+            if matched:
+                edge_citations.append({"edgeKey": f"{edge.get('from')}->{edge.get('to')}", "citation": matched.get("citation")})
+        spec_json["edgeCitations"] = edge_citations
+    spec_json.setdefault("relatedFlows", [])
+    spec_json.setdefault("subprocesses", [])
+    spec_json.setdefault("handoffs", [])
+    return spec_json
+
+
+def _procedural_signal_score(text: str) -> tuple[float, list[str]]:
+    lowered = text.lower()
+    score = 0.0
+    reasons: list[str] = []
+    if re.search(r"^\s*(?:\d+[\.\)]|[-*])\s+", text, re.MULTILINE):
+        score += 0.28
+        reasons.append("Detected ordered steps or bullet workflow cues.")
+    if re.search(r"\b(step|workflow|process|procedure|approval|handoff|escalation|submit|review|publish|reject|retry)\b", lowered):
+        score += 0.32
+        reasons.append("Detected procedural/business-process vocabulary.")
+    if re.search(r"\b(if|when|otherwise|exception|fallback|approve|reject)\b", lowered):
+        score += 0.18
+        reasons.append("Detected branching or exception-path vocabulary.")
+    if re.search(r"\b(owner|actor|team|reviewer|editor|system|operator)\b", lowered):
+        score += 0.12
+        reasons.append("Detected ownership or actor language.")
+    return min(score, 0.9), reasons
+
+
+def assess_page_bpm_fit(db: Session, page_id: str) -> dict | None:
+    page = db.query(Page).filter(Page.id == page_id).first()
+    if not page:
+        return None
+    text = "\n".join(
+        [
+            page.title or "",
+            page.summary or "",
+            page.content_md or "",
+        ]
+    )
+    score, reasons = _procedural_signal_score(text)
+    page_type = (page.page_type or "").lower()
+    if page_type in {"sop", "issue"}:
+        score = max(score, 0.86)
+        reasons.insert(0, f"Page type `{page_type}` is strongly BPM-oriented.")
+    elif page_type in {"overview", "source_derived", "timeline"}:
+        score = max(score, 0.58)
+        reasons.insert(0, f"Page type `{page_type}` may benefit from BPM when it describes operational flow.")
+    elif page_type in {"glossary", "entity", "faq", "concept", "summary", "deep_dive"}:
+        score = min(score, 0.44 if score < 0.45 else score)
+        reasons.insert(0, f"Page type `{page_type}` is often reference-oriented, not always a process flow.")
+
+    if score >= 0.7:
+        classification = "recommended"
+        recommended_action = "generate_bpm"
+    elif score >= 0.45:
+        classification = "optional"
+        recommended_action = "review_manually"
+    else:
+        classification = "not_recommended"
+        recommended_action = "keep_as_reference"
+
+    return {
+        "targetType": "page",
+        "targetId": page.id,
+        "title": page.title,
+        "eligible": classification != "not_recommended",
+        "score": round(score, 2),
+        "classification": classification,
+        "recommendedAction": recommended_action,
+        "reasons": reasons[:5],
+        "pageType": page.page_type,
+    }
+
+
+def assess_source_bpm_fit(db: Session, source_id: str) -> dict | None:
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source:
+        return None
+    chunks = db.query(SourceChunk).filter(SourceChunk.source_id == source.id).order_by(SourceChunk.chunk_index.asc()).limit(8).all()
+    text = "\n".join([source.title or "", source.description or "", *(chunk.content or "" for chunk in chunks)])
+    score, reasons = _procedural_signal_score(text)
+    tags = [str(tag).lower() for tag in (source.tags or [])]
+    if any(tag in {"sop", "workflow", "operations", "runbook", "playbook"} for tag in tags):
+        score = max(score, 0.84)
+        reasons.insert(0, "Source tags indicate SOP/workflow content.")
+    elif any(tag in {"glossary", "reference", "policy"} for tag in tags):
+        score = min(score, 0.4 if score < 0.5 else score)
+        reasons.insert(0, "Source tags suggest reference material rather than executable process flow.")
+
+    source_type = (source.source_type or "").lower()
+    if source_type in {"transcript"}:
+        score = min(score + 0.05, 0.75)
+        reasons.append("Transcript sources may contain operational handoffs that can be mapped into BPM.")
+
+    if score >= 0.7:
+        classification = "recommended"
+        recommended_action = "generate_bpm"
+    elif score >= 0.45:
+        classification = "optional"
+        recommended_action = "review_manually"
+    else:
+        classification = "not_recommended"
+        recommended_action = "keep_as_reference"
+
+    return {
+        "targetType": "source",
+        "targetId": source.id,
+        "title": source.title,
+        "eligible": classification != "not_recommended",
+        "score": round(score, 2),
+        "classification": classification,
+        "recommendedAction": recommended_action,
+        "reasons": reasons[:5],
+        "sourceType": source.source_type,
+        "tags": source.tags or [],
+    }
+
+
+def _source_citations_from_chunks(source: Source, chunks: list[SourceChunk], limit: int = 8) -> list[dict]:
+    citations: list[dict] = []
+    for chunk in chunks[:limit]:
+        citations.append(
+            {
+                "sourceId": source.id,
+                "sourceTitle": source.title,
+                "chunkId": chunk.id,
+                "chunkIndex": chunk.chunk_index,
+                "chunkSectionTitle": chunk.section_title,
+                "pageNumber": chunk.page_number,
+                "snippet": (chunk.content or "")[:280],
+                "sourceSpanStart": chunk.span_start,
+                "sourceSpanEnd": chunk.span_end,
+            }
+        )
+    return citations
+
+
+def _page_citations(db: Session, page_id: str, limit: int = 8) -> list[dict]:
+    rows = (
+        db.query(Claim, SourceChunk, Source)
+        .join(SourceChunk, SourceChunk.id == Claim.source_chunk_id)
+        .join(Source, Source.id == SourceChunk.source_id)
+        .join(PageSourceLink, PageSourceLink.source_id == Source.id)
+        .filter(PageSourceLink.page_id == page_id)
+        .order_by(Claim.extracted_at.desc())
+        .limit(limit)
+        .all()
+    )
+    citations: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for claim, chunk, source in rows:
+        key = (source.id, chunk.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append(
+            {
+                "sourceId": source.id,
+                "sourceTitle": source.title,
+                "claimId": claim.id,
+                "claimText": claim.text,
+                "chunkId": chunk.id,
+                "chunkIndex": chunk.chunk_index,
+                "chunkSectionTitle": chunk.section_title,
+                "pageNumber": chunk.page_number,
+                "snippet": (claim.text or chunk.content or "")[:280],
+                "sourceSpanStart": chunk.span_start,
+                "sourceSpanEnd": chunk.span_end,
+            }
+        )
+    return citations
+
+
+def _create_generated_diagram(
+    db: Session,
+    *,
+    actor: str,
+    title: str,
+    objective: str,
+    collection_id: str | None,
+    source_page_ids: list[str],
+    source_ids: list[str],
+    owner: str | None,
+    source_kind: str,
+    text: str,
+    citations: list[dict],
+) -> dict:
+    llm_spec = _build_llm_generation(
+        title=title,
+        objective=objective,
+        text=text,
+        owner=owner,
+        citations=citations,
+        source_kind=source_kind,
+    )
+    spec_json = llm_spec or _build_heuristic_generation(
+        title=title,
+        objective=objective,
+        text=text,
+        owner=owner,
+        citations=citations,
+    )
+    spec_json["title"] = title
+    spec_json["sourceKind"] = source_kind
+    spec_json["sourcePageIds"] = source_page_ids
+    spec_json["sourceIds"] = source_ids
+    spec_json["reviewStatus"] = "needs_review"
+    spec_json = _ensure_traceability_fields(spec_json)
+    spec_json["validation"] = _validate_generated_spec(spec_json)
+    actor_lanes = [actor_item.get("label") for actor_item in spec_json.get("actors", []) if isinstance(actor_item, dict) and actor_item.get("label")]
+    entry_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "start"]
+    exit_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "end"]
+    drawio_xml = _drawio_xml_from_spec(spec_json)
+    return create_diagram(
+        db,
+        title=title,
+        objective=objective,
+        owner=(owner or actor).strip() or actor,
+        collection_id=collection_id,
+        actor_lanes=[lane for lane in actor_lanes if lane],
+        source_page_ids=source_page_ids,
+        source_ids=source_ids,
+        entry_points=[item for item in entry_points if item],
+        exit_points=[item for item in exit_points if item],
+        related_diagram_ids=[],
+        spec_json=spec_json,
+        drawio_xml=drawio_xml,
+    )
+
+
+def generate_diagram_from_page(db: Session, page_id: str, *, actor: str) -> dict | None:
+    page = db.query(Page).filter(Page.id == page_id).first()
+    if not page:
+        return None
+    source_ids = [source_id for (source_id,) in db.query(PageSourceLink.source_id).filter(PageSourceLink.page_id == page.id).all()]
+    linked_sources = db.query(Source).filter(Source.id.in_(source_ids)).all() if source_ids else []
+    linked_chunks = (
+        db.query(SourceChunk)
+        .filter(SourceChunk.source_id.in_(source_ids))
+        .order_by(SourceChunk.source_id.asc(), SourceChunk.chunk_index.asc())
+        .limit(12)
+        .all()
+        if source_ids
+        else []
+    )
+    text_parts = [page.title, page.summary or "", page.content_md or ""]
+    if linked_chunks:
+        text_parts.append("\n\n".join(chunk.content for chunk in linked_chunks if chunk.content))
+    text = "\n\n".join(part for part in text_parts if part)
+    citations = _page_citations(db, page.id)
+    if not citations and linked_sources:
+        citations = _source_citations_from_chunks(linked_sources[0], linked_chunks)
+    title = f"{page.title} BPM Flow"
+    objective = page.summary or f"BPM draft generated from page `{page.title}`."
+    return _create_generated_diagram(
+        db,
+        actor=actor,
+        title=title,
+        objective=objective,
+        collection_id=page.collection_id,
+        source_page_ids=[page.id],
+        source_ids=source_ids,
+        owner=page.owner,
+        source_kind="page",
+        text=text,
+        citations=citations,
+    )
+
+
+def generate_diagram_from_source(db: Session, source_id: str, *, actor: str) -> dict | None:
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source:
+        return None
+    chunks = db.query(SourceChunk).filter(SourceChunk.source_id == source.id).order_by(SourceChunk.chunk_index.asc()).limit(12).all()
+    linked_page_ids = [page_id for (page_id,) in db.query(PageSourceLink.page_id).filter(PageSourceLink.source_id == source.id).all()]
+    text_parts = [source.title, source.description or ""]
+    text_parts.extend(chunk.content for chunk in chunks if chunk.content)
+    text = "\n\n".join(part for part in text_parts if part)
+    citations = _source_citations_from_chunks(source, chunks)
+    objective = source.description or f"BPM draft generated from source `{source.title}`."
+    return _create_generated_diagram(
+        db,
+        actor=actor,
+        title=f"{source.title} BPM Flow",
+        objective=objective,
+        collection_id=source.collection_id,
+        source_page_ids=linked_page_ids,
+        source_ids=[source.id],
+        owner=actor,
+        source_kind="source",
+        text=text,
+        citations=citations,
+    )
+
+
+def list_diagrams(
+    db: Session,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    search: str | None = None,
+    collection_id: str | None = None,
+    page_id: str | None = None,
+    source_id: str | None = None,
+) -> dict:
+    query = db.query(Diagram)
+    if status:
+        query = query.filter(Diagram.status == status)
+    if collection_id == "standalone":
+        query = query.filter(Diagram.collection_id.is_(None))
+    elif collection_id:
+        query = query.filter(Diagram.collection_id == collection_id)
+    if page_id:
+        query = query.filter(Diagram.source_page_ids.contains([page_id]))
+    if source_id:
+        query = query.filter(Diagram.source_ids.contains([source_id]))
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.filter((Diagram.title.ilike(needle)) | (Diagram.objective.ilike(needle)))
+    total = query.count()
+    rows = (
+        query.order_by(Diagram.updated_at.desc())
+        .offset(max(0, page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {
+        "data": [serialize_diagram(row, db) for row in rows],
+        "total": total,
+        "page": page,
+        "pageSize": page_size,
+        "hasMore": page * page_size < total,
+    }
+
+
+def get_diagram_by_slug(db: Session, slug: str) -> dict | None:
+    row = db.query(Diagram).filter(Diagram.slug == slug).first()
+    return serialize_diagram(row, db) if row else None
+
+
+def get_diagram_by_id(db: Session, diagram_id: str) -> Diagram | None:
+    return db.query(Diagram).filter(Diagram.id == diagram_id).first()
+
+
+def get_diagram_versions(db: Session, diagram_id: str) -> list[dict]:
+    rows = (
+        db.query(DiagramVersion)
+        .filter(DiagramVersion.diagram_id == diagram_id)
+        .order_by(DiagramVersion.version_no.desc())
+        .all()
+    )
+    return [serialize_diagram_version(row) for row in rows]
+
+
+def get_diagram_audit_logs(db: Session, diagram_id: str, limit: int = 50) -> list[dict]:
+    return list_audit_logs(db, object_type="diagram", object_id=diagram_id, limit=limit)
+
+
+def create_diagram(
+    db: Session,
+    *,
+    title: str,
+    owner: str,
+    objective: str = "",
+    collection_id: str | None = None,
+    actor_lanes: list[str] | None = None,
+    source_page_ids: list[str] | None = None,
+    source_ids: list[str] | None = None,
+    entry_points: list[str] | None = None,
+    exit_points: list[str] | None = None,
+    related_diagram_ids: list[str] | None = None,
+    spec_json: dict | None = None,
+    drawio_xml: str = "",
+) -> dict:
+    now = datetime.now(timezone.utc)
+    record = Diagram(
+        id=f"diag-{uuid4().hex[:8]}",
+        slug=_unique_slug(db, slugify(title)),
+        title=title.strip()[:255],
+        objective=(objective or "").strip(),
+        notation="bpm",
+        status="draft",
+        owner=owner,
+        collection_id=collection_id,
+        current_version=1,
+        drawio_xml=drawio_xml or "",
+        spec_json=spec_json or {},
+        source_page_ids=source_page_ids or [],
+        source_ids=source_ids or [],
+        actor_lanes=actor_lanes or [],
+        entry_points=entry_points or [],
+        exit_points=exit_points or [],
+        related_diagram_ids=related_diagram_ids or [],
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(record)
+    db.flush()
+    db.add(
+        DiagramVersion(
+            id=f"diagver-{uuid4().hex[:8]}",
+            diagram_id=record.id,
+            version_no=1,
+            drawio_xml=record.drawio_xml,
+            spec_json=record.spec_json,
+            change_summary="Initial diagram draft",
+            created_at=now,
+            created_by_agent_or_user=owner,
+        )
+    )
+    create_audit_log(
+        db,
+        action="diagram_created",
+        object_type="diagram",
+        object_id=record.id,
+        actor=owner,
+        summary=f"Created diagram `{record.title}`",
+        metadata={"diagramId": record.id, "diagramSlug": record.slug},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+@dataclass
+class DiagramEditConflict(Exception):
+    current_version: int
+
+
+def update_diagram(
+    db: Session,
+    diagram_id: str,
+    *,
+    title: str,
+    objective: str,
+    owner: str,
+    actor: str,
+    collection_id: str | None,
+    actor_lanes: list[str],
+    source_page_ids: list[str],
+    source_ids: list[str],
+    entry_points: list[str],
+    exit_points: list[str],
+    related_diagram_ids: list[str],
+    spec_json: dict,
+    drawio_xml: str,
+    change_summary: str | None = None,
+    expected_version: int | None = None,
+) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    if expected_version is not None and expected_version != record.current_version:
+        raise DiagramEditConflict(record.current_version)
+    now = datetime.now(timezone.utc)
+    record.title = title.strip()[:255]
+    record.slug = _unique_slug(db, slugify(record.title), diagram_id=record.id)
+    record.objective = (objective or "").strip()
+    record.owner = owner.strip()[:128] or actor
+    record.collection_id = collection_id
+    record.actor_lanes = actor_lanes
+    record.source_page_ids = source_page_ids
+    record.source_ids = source_ids
+    record.entry_points = entry_points
+    record.exit_points = exit_points
+    record.related_diagram_ids = related_diagram_ids
+    record.spec_json = spec_json or {}
+    record.drawio_xml = drawio_xml or ""
+    record.updated_at = now
+    record.current_version += 1
+    db.add(
+        DiagramVersion(
+            id=f"diagver-{uuid4().hex[:8]}",
+            diagram_id=record.id,
+            version_no=record.current_version,
+            drawio_xml=record.drawio_xml,
+            spec_json=record.spec_json,
+            change_summary=(change_summary or "Updated diagram").strip()[:255],
+            created_at=now,
+            created_by_agent_or_user=actor,
+        )
+    )
+    create_audit_log(
+        db,
+        action="diagram_updated",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Updated diagram `{record.title}`",
+        metadata={"diagramId": record.id, "version": record.current_version},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+def publish_diagram(db: Session, diagram_id: str, *, actor: str, actor_metadata: dict | None = None) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    now = datetime.now(timezone.utc)
+    record.status = "published"
+    record.published_at = now
+    record.updated_at = now
+    create_audit_log(
+        db,
+        action="diagram_published",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Published diagram `{record.title}`",
+        metadata={"diagramId": record.id, **(actor_metadata or {})},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+def unpublish_diagram(db: Session, diagram_id: str, *, actor: str, actor_metadata: dict | None = None) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    now = datetime.now(timezone.utc)
+    record.status = "draft"
+    record.updated_at = now
+    create_audit_log(
+        db,
+        action="diagram_unpublished",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Unpublished diagram `{record.title}`",
+        metadata={"diagramId": record.id, **(actor_metadata or {})},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+def submit_diagram_for_review(db: Session, diagram_id: str, *, actor: str) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    now = datetime.now(timezone.utc)
+    spec_json = dict(record.spec_json or {})
+    spec_json["reviewStatus"] = "in_review"
+    record.spec_json = spec_json
+    record.status = "in_review"
+    record.updated_at = now
+    create_audit_log(
+        db,
+        action="diagram_submitted_for_review",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Submitted diagram `{record.title}` for review",
+        metadata={"diagramId": record.id},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+def request_diagram_changes(db: Session, diagram_id: str, *, actor: str, comment: str | None = None) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    now = datetime.now(timezone.utc)
+    spec_json = dict(record.spec_json or {})
+    spec_json["reviewStatus"] = "changes_requested"
+    review_notes = list(spec_json.get("reviewNotes", []))
+    if comment:
+        review_notes.append({"actor": actor, "comment": comment, "at": now.isoformat()})
+    spec_json["reviewNotes"] = review_notes[-10:]
+    record.spec_json = spec_json
+    record.status = "draft"
+    record.updated_at = now
+    create_audit_log(
+        db,
+        action="diagram_changes_requested",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Requested changes for diagram `{record.title}`",
+        metadata={"diagramId": record.id, "comment": comment or ""},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)
+
+
+def approve_diagram_review(db: Session, diagram_id: str, *, actor: str, comment: str | None = None) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    now = datetime.now(timezone.utc)
+    spec_json = dict(record.spec_json or {})
+    spec_json["reviewStatus"] = "approved"
+    review_notes = list(spec_json.get("reviewNotes", []))
+    if comment:
+        review_notes.append({"actor": actor, "comment": comment, "at": now.isoformat()})
+    spec_json["reviewNotes"] = review_notes[-10:]
+    record.spec_json = spec_json
+    record.status = "draft"
+    record.updated_at = now
+    create_audit_log(
+        db,
+        action="diagram_review_approved",
+        object_type="diagram",
+        object_id=record.id,
+        actor=actor,
+        summary=f"Approved diagram review for `{record.title}`",
+        metadata={"diagramId": record.id, "comment": comment or ""},
+    )
+    db.commit()
+    db.refresh(record)
+    return serialize_diagram(record, db)

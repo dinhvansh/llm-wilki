@@ -1,0 +1,57 @@
+{
+  "success": true,
+  "version": "phase17-eval-v1",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "citation-accuracy",
+      "query": "What is required for citation accuracy?",
+      "retrievalHitRate": 1.0,
+      "citationCoverage": 0.6667,
+      "expectedSourceHit": true,
+      "unsupportedClaimCount": 0,
+      "calibratedConfidence": 0.7167,
+      "citationCount": 4
+    },
+    {
+      "id": "hybrid-retrieval",
+      "query": "How should RAG retrieval work?",
+      "retrievalHitRate": 1.0,
+      "citationCoverage": 1.0,
+      "expectedSourceHit": true,
+      "unsupportedClaimCount": 0,
+      "calibratedConfidence": 0.7666,
+      "citationCount": 3
+    },
+    {
+      "id": "safety-evaluation",
+      "query": "What safety evaluation is required before production?",
+      "retrievalHitRate": 1.0,
+      "citationCoverage": 1.0,
+      "expectedSourceHit": true,
+      "unsupportedClaimCount": 0,
+      "calibratedConfidence": 0.7779,
+      "citationCount": 1
+    }
+  ],
+  "averages": {
+    "citationCoverage": 0.8889,
+    "retrievalHitRate": 1.0,
+    "unsupportedClaimCount": 0
+  },
+  "synthetic": {
+    "conflictRuleAvailable": true,
+    "staleRuleAvailable": true,
+    "sopHasSteps": true,
+    "invalidJsonGuard": true,
+    "fallbackSummaryOk": true
+  },
+  "reviewReasonTaxonomy": {
+    "unsupported_claim": "Claim is not backed by retrieved source evidence.",
+    "citation_gap": "Important generated content lacks chunk-level citation.",
+    "conflict": "Source or page content appears contradictory.",
+    "stale_source": "Authoritative source evidence is older than freshness threshold.",
+    "format_quality": "Generated page does not meet page-type structure expectations.",
+    "llm_failure": "Provider output was missing, malformed, or could not be parsed."
+  }
+}
