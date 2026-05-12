@@ -4,7 +4,8 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.services.auth import Actor, actor_from_user, get_user_for_token, has_role
+from app.services.auth import Actor, build_actor, get_user_for_token, has_role
+from app.services.permissions import has_permission_set
 
 
 def get_actor_name(x_user: str | None = Header(default=None, alias="X-User")) -> str:
@@ -30,7 +31,7 @@ def get_current_actor(
 ) -> Actor:
     user = get_user_for_token(db, _bearer_token(authorization))
     if user:
-        return actor_from_user(user)
+        return build_actor(db, user)
     return Actor(id=None, name=get_actor_name(x_user), role="dev", authenticated=False)
 
 
@@ -46,6 +47,15 @@ def require_roles(*roles: str):
     def dependency(actor: Actor = Depends(require_authenticated_actor)) -> Actor:
         if not has_role(actor, allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")
+        return actor
+
+    return dependency
+
+
+def require_permission(permission: str):
+    def dependency(actor: Actor = Depends(require_authenticated_actor)) -> Actor:
+        if not has_permission_set(set(actor.permissions), permission):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
         return actor
 
     return dependency

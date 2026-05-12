@@ -11,6 +11,39 @@ export interface AuthUser {
   email: string
   name: string
   role: 'admin' | 'reviewer' | 'editor' | 'reader' | string
+  departmentId?: string | null
+  departmentName?: string | null
+  permissions: string[]
+  scopeMode: 'all' | 'restricted' | string
+  accessibleCollectionIds: string[]
+  collectionMemberships: Array<{
+    collectionId: string
+    role: string
+  }>
+}
+
+export interface ManagedUser extends AuthUser {
+  isActive: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface Department {
+  id: string
+  name: string
+  slug: string
+  description: string
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface AdminRole {
+  id: string
+  name: string
+  slug: string
+  description: string
+  permissions: string[]
+  isSystem: boolean
 }
 
 // === Source ===
@@ -19,6 +52,7 @@ export interface Source {
   id: string
   title: string
   sourceType: SourceType
+  documentType?: string | null
   mimeType: string
   filePath?: string
   url?: string
@@ -34,6 +68,11 @@ export interface Source {
   description?: string
   tags: string[]
   collectionId?: string | null
+  sourceStatus?: string | null
+  authorityLevel?: string | null
+  effectiveDate?: string | null
+  version?: string | null
+  owner?: string | null
 }
 
 export interface SourceSuggestion {
@@ -59,6 +98,7 @@ export interface Collection {
   color: string
   sourceCount: number
   pageCount: number
+  memberCount: number
   createdAt: string
   updatedAt: string
 }
@@ -72,9 +112,59 @@ export interface SourceChunk {
   content: string
   tokenCount: number
   embeddingId?: string
+  metadataJson?: Record<string, unknown>
   spanStart: number
   spanEnd: number
   createdAt: string
+}
+
+export interface SourceArtifact {
+  id: string
+  sourceId: string
+  artifactType: 'ocr' | 'image' | 'table' | 'structure' | 'notebook' | string
+  title: string
+  status: string
+  contentType?: string | null
+  summary?: string | null
+  previewText?: string | null
+  url?: string | null
+  pageNumber?: number | null
+  metadataJson?: Record<string, unknown> | null
+}
+
+export interface NoteAnchor {
+  id: string
+  noteId: string
+  targetType: string
+  targetId?: string | null
+  sourceId?: string | null
+  chunkId?: string | null
+  artifactId?: string | null
+  pageId?: string | null
+  sectionKey?: string | null
+  reviewItemId?: string | null
+  askMessageId?: string | null
+  citationId?: string | null
+  snippet: string
+  metadataJson?: Record<string, unknown> | null
+  createdAt: string
+}
+
+export interface Note {
+  id: string
+  title: string
+  body: string
+  scope: 'private' | 'collection' | 'workspace' | string
+  status: 'active' | 'archived' | string
+  ownerId?: string | null
+  ownerName: string
+  collectionId?: string | null
+  tags: string[]
+  metadataJson?: Record<string, unknown> | null
+  anchors: NoteAnchor[]
+  createdAt: string
+  updatedAt: string
+  archivedAt?: string | null
 }
 
 // === Entity & Claim ===
@@ -428,10 +518,34 @@ export interface ReviewItem {
   itemKind?: 'heuristic' | 'generated_update' | string
   suggestions?: Array<{ type: string; title: string; targetId?: string; targetSlug?: string; confidenceScore: number; reason: string }>
   backlinks?: Array<{ id: string; slug: string; title: string; relationType: string }>
+  comments?: Array<{ id: string; reviewItemId: string; actor: string; comment: string; createdAt: string }>
   pageContext?: ReviewPageContext
   changeSet?: ReviewChangeSet
   reviewActions?: ReviewActions
   isVirtual?: boolean
+}
+
+export interface SkillPackage {
+  id: string
+  name: string
+  version: string
+  scope: string
+  status: string
+  summary: string
+  description: string
+  capabilities: string[]
+  tags: string[]
+  entryPoints: string[]
+  owner?: string | null
+  reviewStatus: string
+  reviewHistory?: Array<{
+    id: string
+    type: string
+    actor: string
+    comment?: string | null
+    createdAt: string
+  }>
+  metadataJson: Record<string, unknown>
 }
 
 // === Dashboard ===
@@ -603,7 +717,13 @@ export interface Citation {
   index: number
   sourceId: string
   sourceTitle: string
+  candidateType?: string | null
+  artifactId?: string | null
+  artifactType?: string | null
   chunkId?: string
+  unitId?: string
+  sectionKey?: string
+  sectionTitle?: string
   snippet: string
   matchedText?: string
   chunkSpanStart?: number
@@ -614,6 +734,15 @@ export interface Citation {
   pageTitle?: string
   url?: string
   confidence: number
+  evidenceGrade?: {
+    relevance?: number
+    specificity?: number
+    authority?: number
+    freshness?: number
+    termCoverage?: number
+    contradictionRisk?: number
+  } | null
+  citationReason?: string | null
 }
 
 export interface RelatedPage {
@@ -642,6 +771,18 @@ export interface AskInterpretedQuery {
   needsClarification: boolean
   clarificationQuestion?: string | null
   conversationSummary?: string | null
+  planner?: {
+    strategy: string
+    rationale?: string | null
+    askBackMode?: string | null
+    subQueries: Array<{
+      id: string
+      query: string
+      intent: string
+      role: string
+      reason?: string | null
+    }>
+  } | null
 }
 
 export interface AskConflict {
@@ -679,10 +820,45 @@ export interface AskDiagnostics {
   retrievalLimit: number
   searchResultLimit: number
   clarificationTriggered?: boolean
+  planning?: {
+    strategy: string
+    rationale?: string | null
+    askBackMode?: string | null
+    subQueries: Array<{
+      id: string
+      query: string
+      intent: string
+      role: string
+      reason?: string | null
+    }>
+  } | null
   topChunks: RetrievalDiagnostic[]
   topCandidates: RetrievalDiagnostic[]
   selectedContext: Array<Record<string, unknown>>
   contextCoverage: Record<string, unknown>
+  answerVerification?: {
+    supported: boolean
+    coverage: number
+    answerEvidenceOverlap?: number
+    citationCount: number
+    missingEvidenceRisk: 'low' | 'medium' | 'high' | string
+    notes: string[]
+  } | null
+}
+
+export interface AskScope {
+  type: 'source' | 'page' | 'collection' | string
+  id: string
+  title: string
+  description?: string | null
+  strict?: boolean
+  matchedInScope?: boolean
+}
+
+export interface SuggestedPrompt {
+  text: string
+  category: string
+  reason?: string | null
 }
 
 export interface AskResponse {
@@ -692,6 +868,8 @@ export interface AskResponse {
   answer: string
   answerType?: string | null
   interpretedQuery?: AskInterpretedQuery | null
+  scope?: AskScope | null
+  suggestedPrompts?: SuggestedPrompt[]
   citations: Citation[]
   relatedPages: RelatedPage[]
   relatedSources: RelatedSource[]

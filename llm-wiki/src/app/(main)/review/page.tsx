@@ -7,8 +7,9 @@ import { EmptyState } from '@/components/data-display/empty-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { ConfidenceBar } from '@/components/data-display/confidence-bar'
+import { EvidenceCard } from '@/components/evidence/evidence-card'
 import { formatRelativeTime, cn } from '@/lib/utils'
-import { useReviewQueue, useApproveReview, useRejectReview, useMergeReview, useCreateIssuePageFromReview, useRequestReviewRebuild } from '@/hooks/use-review'
+import { useReviewQueue, useApproveReview, useRejectReview, useMergeReview, useCreateIssuePageFromReview, useRequestReviewRebuild, useAddReviewComment } from '@/hooks/use-review'
 import type { ReviewDiffLine, ReviewItem } from '@/lib/types'
 import { useAuth } from '@/providers/auth-provider'
 import {
@@ -84,6 +85,7 @@ export default function ReviewQueuePage() {
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectForm, setShowRejectForm] = useState(false)
   const [mergeComment, setMergeComment] = useState('')
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({})
   const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({})
 
   const { data, isLoading, isError, error, refetch } = useReviewQueue({
@@ -94,6 +96,7 @@ export default function ReviewQueuePage() {
   const mergeMutation = useMergeReview()
   const createIssuePageMutation = useCreateIssuePageFromReview()
   const rebuildMutation = useRequestReviewRebuild()
+  const addCommentMutation = useAddReviewComment()
   const { hasRole } = useAuth()
   const canReview = hasRole('reviewer', 'admin')
   const canEdit = hasRole('editor', 'reviewer', 'admin')
@@ -348,13 +351,20 @@ export default function ReviewQueuePage() {
                          </h4>
                          <div className="space-y-2">
                            {item.evidenceSnippets.map((snippet, i) => (
-                             <div key={i} className="bg-card border border-border rounded-lg p-3">
-                               <div className="flex items-center justify-between mb-1">
-                                 <span className="text-xs font-medium">{snippet.sourceTitle}</span>
-                                 <span className="text-xs text-muted-foreground">{Math.round(snippet.relevance)}%</span>
-                               </div>
-                               <p className="text-xs leading-relaxed italic line-clamp-3">"{snippet.content}"</p>
-                             </div>
+                             <EvidenceCard
+                               key={`${snippet.sourceId}-${snippet.chunkId ?? i}`}
+                               index={i + 1}
+                               title={snippet.sourceTitle}
+                               snippet={<span className="italic">"{snippet.content}"</span>}
+                               href={`/sources/${snippet.sourceId}${snippet.chunkId ? `?chunkId=${encodeURIComponent(snippet.chunkId)}` : ''}`}
+                               type="review evidence"
+                               confidence={snippet.relevance}
+                               tone="review"
+                               actions={[
+                                 { label: 'Open source', href: `/sources/${snippet.sourceId}${snippet.chunkId ? `?chunkId=${encodeURIComponent(snippet.chunkId)}` : ''}` },
+                                 { label: 'Ask about evidence', href: `/ask?pageId=${encodeURIComponent(item.pageId)}&pageTitle=${encodeURIComponent(item.pageTitle)}&prompt=${encodeURIComponent(`Review this evidence from ${snippet.sourceTitle}: ${snippet.content}`)}` },
+                               ]}
+                             />
                            ))}
                            {item.issues.map((issue, i) => (
                              <div key={`ev-${i}`} className="bg-muted/50 rounded-lg p-3">
@@ -370,8 +380,8 @@ export default function ReviewQueuePage() {
                                <GitMerge className="w-4 h-4" />
                                Suggestions
                              </h4>
-                             <div className="space-y-2">
-                               {item.suggestions?.map((suggestion, i) => (
+                            <div className="space-y-2">
+                              {item.suggestions?.map((suggestion, i) => (
                                  <label key={`${item.id}-suggestion-${i}`} className="flex items-start gap-3 bg-card border border-border rounded-lg p-3 cursor-pointer">
                                    {suggestion.type === 'page_match' && suggestion.targetId ? (
                                      <input
@@ -411,7 +421,7 @@ export default function ReviewQueuePage() {
                            </div>
                          )}
 
-                         {(item.backlinks?.length ?? 0) > 0 && (
+                          {(item.backlinks?.length ?? 0) > 0 && (
                            <div className="mt-4">
                              <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
                                <Link2 className="w-4 h-4" />
@@ -433,7 +443,80 @@ export default function ReviewQueuePage() {
                                ))}
                              </div>
                            </div>
-                         )}
+                          )}
+
+                         <div className="mt-4">
+                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                             <BookOpen className="w-4 h-4" />
+                             Evidence Actions
+                           </h4>
+                           <div className="flex flex-wrap gap-2">
+                             <Link
+                               href={`/ask?pageId=${encodeURIComponent(item.pageId)}&pageTitle=${encodeURIComponent(item.pageTitle)}&prompt=${encodeURIComponent(`What evidence should a reviewer inspect first for ${item.pageTitle}?`)}`}
+                               className="rounded-md border border-input px-3 py-1.5 text-xs hover:bg-accent"
+                             >
+                               Ask this page
+                             </Link>
+                             {item.sourceIds[0] && (
+                               <Link
+                                 href={`/sources/${item.sourceIds[0]}`}
+                                 className="rounded-md border border-input px-3 py-1.5 text-xs hover:bg-accent"
+                               >
+                                 Inspect first source
+                               </Link>
+                             )}
+                             {item.evidenceSnippets[0] && (
+                               <Link
+                                 href={`/ask?pageId=${encodeURIComponent(item.pageId)}&pageTitle=${encodeURIComponent(item.pageTitle)}&prompt=${encodeURIComponent(`Review this evidence from ${item.evidenceSnippets[0].sourceTitle}: ${item.evidenceSnippets[0].content}`)}`}
+                                 className="rounded-md border border-input px-3 py-1.5 text-xs hover:bg-accent"
+                               >
+                                 Ask about top evidence
+                               </Link>
+                             )}
+                           </div>
+                         </div>
+
+                         <div className="mt-4">
+                           <h4 className="text-sm font-semibold mb-2">Review Comments</h4>
+                           <div className="space-y-2">
+                             {(item.comments ?? []).map(comment => (
+                               <div key={comment.id} className="rounded-lg border border-border bg-card p-3">
+                                 <div className="flex items-center justify-between gap-2">
+                                   <span className="text-xs font-medium">{comment.actor}</span>
+                                   <span className="text-[11px] text-muted-foreground">{formatRelativeTime(comment.createdAt)}</span>
+                                 </div>
+                                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{comment.comment}</p>
+                               </div>
+                             ))}
+                             {!(item.comments ?? []).length && (
+                               <p className="text-xs text-muted-foreground">No review comments yet.</p>
+                             )}
+                           </div>
+                           <div className="mt-3 flex flex-col gap-2">
+                             <textarea
+                               value={commentDrafts[item.id] ?? ''}
+                               onChange={event => setCommentDrafts(current => ({ ...current, [item.id]: event.target.value }))}
+                               onClick={event => event.stopPropagation()}
+                               placeholder="Add a reviewer note or evidence handoff..."
+                               className="min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                             />
+                             <div className="flex justify-end">
+                               <button
+                                 onClick={event => {
+                                   event.stopPropagation()
+                                   const comment = (commentDrafts[item.id] ?? '').trim()
+                                   if (!comment) return
+                                   addCommentMutation.mutate({ id: item.id, comment })
+                                   setCommentDrafts(current => ({ ...current, [item.id]: '' }))
+                                 }}
+                                 disabled={addCommentMutation.isPending || !canEdit}
+                                 className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+                               >
+                                 Add comment
+                               </button>
+                             </div>
+                           </div>
+                         </div>
 
                          <div className="mt-4 pt-4 border-t border-border space-y-3">
                            {showRejectForm ? (

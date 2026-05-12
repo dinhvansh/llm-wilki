@@ -1,25 +1,112 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
+import { Suspense, useState, useRef, useEffect } from 'react'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/data-display/empty-state'
 import { MarkdownRenderer } from '@/components/data-display/markdown-renderer'
 import { StatusBadge } from '@/components/data-display/status-badge'
 import { ConfidenceBar } from '@/components/data-display/confidence-bar'
+import { EvidenceCard } from '@/components/evidence/evidence-card'
+import { EvidenceDrawer } from '@/components/evidence/evidence-drawer'
 import { formatRelativeTime } from '@/lib/utils'
 import { useAskConversation, useChatSession, useChatSessions, useDeleteChatSession } from '@/hooks/use-ask'
+import { useCollections } from '@/hooks/use-collections'
+import { useCreateNote } from '@/hooks/use-notes'
 import { useAuth } from '@/providers/auth-provider'
 import {
   Send, BookOpen, FileText, Layers,
-  Lightbulb, RefreshCw, Plus, Trash2
+  Lightbulb, RefreshCw, Plus, Trash2, ShieldCheck, AlertTriangle
 } from 'lucide-react'
-import type { AskResponse } from '@/lib/types'
+import type { AskResponse, AskScope } from '@/lib/types'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   question?: string
   response?: AskResponse
+}
+
+function citationHref(citation: AskResponse['citations'][number]): string {
+  const params = new URLSearchParams()
+  if (citation.chunkId) {
+    params.set('chunkId', citation.chunkId)
+  }
+  if (citation.artifactId) {
+    params.set('artifactId', citation.artifactId)
+    params.set('tab', 'artifacts')
+  }
+  const query = params.toString()
+  return `/sources/${citation.sourceId}${query ? `?${query}` : ''}`
+}
+
+function formatEvidenceLabel(value: string | null | undefined): string {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+function starterPromptsForScope(scope: AskScope | null): string[] {
+  if (!scope) return SUGGESTED_QUESTIONS
+  if (scope.type === 'source') {
+    return [
+      `Summarize ${scope.title}.`,
+      `What are the most important points in ${scope.title}?`,
+      `What should I read first in ${scope.title}?`,
+      `What risks or caveats appear in ${scope.title}?`,
+    ]
+  }
+  if (scope.type === 'page') {
+    return [
+      `What source evidence backs ${scope.title}?`,
+      `Summarize ${scope.title}.`,
+      `What parts of ${scope.title} may need review?`,
+      `What related sources should I inspect next?`,
+    ]
+  }
+  return [
+    `Which document in ${scope.title} is most authoritative for this topic?`,
+    `Summarize the most important documents in ${scope.title}.`,
+    `Compare the top two relevant documents in ${scope.title}.`,
+    `What should I read first in ${scope.title}?`,
+  ]
+}
+
+function scopeFromSearchParams(params: URLSearchParams): AskScope | null {
+  const sourceId = params.get('sourceId')
+  const pageId = params.get('pageId')
+  const collectionId = params.get('collectionId')
+  if (sourceId) {
+    return {
+      type: 'source',
+      id: sourceId,
+      title: params.get('sourceTitle') || 'Scoped source',
+      description: params.get('sourceDescription'),
+      strict: true,
+      matchedInScope: true,
+    }
+  }
+  if (pageId) {
+    return {
+      type: 'page',
+      id: pageId,
+      title: params.get('pageTitle') || 'Scoped page',
+      description: params.get('pageSummary'),
+      strict: true,
+      matchedInScope: true,
+    }
+  }
+  if (collectionId) {
+    return {
+      type: 'collection',
+      id: collectionId,
+      title: params.get('collectionTitle') || 'Scoped collection',
+      description: params.get('collectionDescription'),
+      strict: true,
+      matchedInScope: true,
+    }
+  }
+  return null
 }
 
 const SUGGESTED_QUESTIONS = [
@@ -62,10 +149,137 @@ function HighlightedSnippet({ text, query }: { text: string; query: string }) {
 }
 
 function AnswerDisplay({ response }: { response: AskResponse }) {
+  const [selectedCitation, setSelectedCitation] = useState<AskResponse['citations'][number] | null>(null)
   const { hasRole } = useAuth()
   const canDebug = hasRole('admin')
+  const canSaveNote = hasRole('editor', 'reviewer', 'admin')
+  const createNote = useCreateNote()
+  const artifactCitations = response.citations.filter(citation => Boolean(citation.artifactType))
+  const textCitations = response.citations.filter(citation => !citation.artifactType)
+  const verification = response.diagnostics?.answerVerification
+
+  const renderCitationCard = (cit: AskResponse['citations'][number]) => (
+    <EvidenceCard
+      key={cit.id}
+      index={cit.index}
+      title={cit.sourceTitle}
+      subtitle={cit.sectionTitle ? `Section: ${cit.sectionTitle}` : undefined}
+      snippet={<HighlightedSnippet text={cit.snippet} query={response.question} />}
+      href={citationHref(cit)}
+      type={cit.artifactType || cit.candidateType}
+      confidence={cit.confidence}
+      tone={cit.artifactType ? 'artifact' : 'default'}
+      meta={[
+        cit.citationReason ?? null,
+        typeof cit.evidenceGrade?.termCoverage === 'number' ? `Term coverage: ${Math.round(cit.evidenceGrade.termCoverage * 100)}%` : null,
+        typeof cit.evidenceGrade?.authority === 'number' ? `Authority: ${Math.round(cit.evidenceGrade.authority * 100)}%` : null,
+        cit.matchedText ? `Match: ${cit.matchedText}` : null,
+        typeof cit.sourceSpanStart === 'number' && typeof cit.sourceSpanEnd === 'number' ? `Span: ${cit.sourceSpanStart}-${cit.sourceSpanEnd}` : null,
+      ]}
+      actions={[
+        { label: 'Inspect evidence', onClick: () => setSelectedCitation(cit), variant: 'primary' },
+        { label: 'Open source', href: citationHref(cit), variant: 'secondary' },
+        { label: 'Ask scoped', href: `/ask?sourceId=${encodeURIComponent(cit.sourceId)}&sourceTitle=${encodeURIComponent(cit.sourceTitle)}&prompt=${encodeURIComponent(`Explain this evidence: ${cit.snippet}`)}`, variant: 'secondary' },
+        ...(canSaveNote ? [{
+          label: createNote.isPending ? 'Saving note...' : 'Save note',
+          disabled: createNote.isPending,
+          onClick: () =>
+            createNote.mutate({
+                title: `Note from ${cit.sourceTitle}`,
+                body: cit.snippet,
+                scope: 'private',
+                tags: ['ask-citation'],
+                anchors: [
+                  {
+                    targetType: 'ask_citation',
+                    targetId: cit.id,
+                    sourceId: cit.sourceId,
+                    chunkId: cit.chunkId,
+                    artifactId: cit.artifactId,
+                    pageId: cit.pageId,
+                    sectionKey: cit.sectionKey,
+                    citationId: cit.id,
+                    snippet: cit.snippet,
+                    metadataJson: {
+                      question: response.question,
+                      answerId: response.id,
+                      confidence: cit.confidence,
+                      candidateType: cit.candidateType,
+                    },
+                  },
+                ],
+              }),
+        }] : []),
+      ]}
+    />
+  )
+
   return (
     <div className="space-y-4">
+      <EvidenceDrawer
+        open={Boolean(selectedCitation)}
+        title={selectedCitation?.sourceTitle ?? 'Evidence'}
+        subtitle={selectedCitation?.sectionTitle ? `Section: ${selectedCitation.sectionTitle}` : selectedCitation?.candidateType?.replace(/_/g, ' ')}
+        snippet={selectedCitation ? <HighlightedSnippet text={selectedCitation.snippet} query={response.question} /> : null}
+        meta={[
+          selectedCitation?.citationReason ?? null,
+          typeof selectedCitation?.evidenceGrade?.termCoverage === 'number' ? `Term coverage: ${Math.round(selectedCitation.evidenceGrade.termCoverage * 100)}%` : null,
+          typeof selectedCitation?.evidenceGrade?.specificity === 'number' ? `Specificity: ${Math.round(selectedCitation.evidenceGrade.specificity * 100)}%` : null,
+          typeof selectedCitation?.evidenceGrade?.contradictionRisk === 'number' ? `Contradiction risk: ${Math.round(selectedCitation.evidenceGrade.contradictionRisk * 100)}%` : null,
+          selectedCitation?.artifactType ? `Artifact: ${selectedCitation.artifactType}` : null,
+          selectedCitation?.chunkId ? `Chunk: ${selectedCitation.chunkId}` : null,
+          selectedCitation?.matchedText ? `Match: ${selectedCitation.matchedText}` : null,
+          typeof selectedCitation?.sourceSpanStart === 'number' && typeof selectedCitation?.sourceSpanEnd === 'number'
+            ? `Source span: ${selectedCitation.sourceSpanStart}-${selectedCitation.sourceSpanEnd}`
+            : null,
+        ]}
+        actions={selectedCitation ? [
+          { label: 'Open source detail', href: citationHref(selectedCitation), variant: 'primary' },
+          { label: 'Ask scoped', href: `/ask?sourceId=${encodeURIComponent(selectedCitation.sourceId)}&sourceTitle=${encodeURIComponent(selectedCitation.sourceTitle)}&prompt=${encodeURIComponent(`Explain this evidence: ${selectedCitation.snippet}`)}` },
+          ...(canSaveNote ? [{
+            label: createNote.isPending ? 'Saving note...' : 'Save note',
+            disabled: createNote.isPending,
+            onClick: () => {
+              createNote.mutate({
+                title: `Note from ${selectedCitation.sourceTitle}`,
+                body: selectedCitation.snippet,
+                scope: 'private',
+                tags: ['ask-citation'],
+                anchors: [{
+                  targetType: 'ask_citation',
+                  targetId: selectedCitation.id,
+                  sourceId: selectedCitation.sourceId,
+                  chunkId: selectedCitation.chunkId,
+                  artifactId: selectedCitation.artifactId,
+                  pageId: selectedCitation.pageId,
+                  sectionKey: selectedCitation.sectionKey,
+                  citationId: selectedCitation.id,
+                  snippet: selectedCitation.snippet,
+                  metadataJson: {
+                    question: response.question,
+                    answerId: response.id,
+                    confidence: selectedCitation.confidence,
+                    candidateType: selectedCitation.candidateType,
+                  },
+                }],
+              })
+            },
+          }] : []),
+        ] : []}
+        onClose={() => setSelectedCitation(null)}
+      />
+      {response.scope && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+          <div className="font-medium">Scope</div>
+          <div className="mt-1">
+            {response.scope.type}: {response.scope.title}
+          </div>
+          {response.scope.description && <div className="mt-1 text-sky-800/80">{response.scope.description}</div>}
+          {response.scope.matchedInScope === false && (
+            <div className="mt-1 text-sky-800/80">No grounded evidence matched inside this scope.</div>
+          )}
+        </div>
+      )}
       {response.interpretedQuery && (
         <div className="rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-xs">
           <div className="font-medium text-foreground">Interpreted query</div>
@@ -74,7 +288,17 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
             <span>Intent: {response.interpretedQuery.intent}</span>
             <span>Answer type: {response.interpretedQuery.answerType}</span>
             {response.interpretedQuery.needsClarification && <span>Clarification needed</span>}
+            {response.interpretedQuery.planner && <span>Planner: {response.interpretedQuery.planner.strategy}</span>}
           </div>
+          {response.interpretedQuery.planner && response.interpretedQuery.planner.subQueries.length > 0 && (
+            <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+              {response.interpretedQuery.planner.subQueries.map(step => (
+                <div key={step.id}>
+                  {step.id}. {step.intent} - {step.query}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -87,6 +311,25 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
           </span>
         )}
       </div>
+
+      {verification && (
+        <div className={`rounded-lg border px-3 py-2 text-sm ${
+          verification.supported
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+            : 'border-amber-200 bg-amber-50 text-amber-950'
+        }`}>
+          <div className="flex items-center gap-2 font-medium">
+            {verification.supported ? <ShieldCheck className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+            Evidence verification: {verification.supported ? 'supported' : 'inspect before using'}
+          </div>
+          <div className="mt-1 text-xs opacity-80">
+            Coverage {(verification.coverage * 100).toFixed(0)}% · {verification.citationCount} citation{verification.citationCount === 1 ? '' : 's'} · risk {verification.missingEvidenceRisk}
+          </div>
+          {verification.notes.length > 0 && (
+            <div className="mt-1 text-xs opacity-80">{verification.notes.join(' ')}</div>
+          )}
+        </div>
+      )}
 
       {/* Answer */}
       <MarkdownRenderer content={response.answer} />
@@ -116,6 +359,31 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
         </div>
       )}
 
+      {response.suggestedPrompts && response.suggestedPrompts.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Lightbulb className="w-3.5 h-3.5" />
+            Suggested Follow-ups
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {response.suggestedPrompts.map(prompt => (
+              <button
+                key={`${prompt.category}-${prompt.text}`}
+                type="button"
+                onClick={() => {
+                  const event = new CustomEvent('ask-followup', { detail: prompt.text })
+                  window.dispatchEvent(event)
+                }}
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:border-primary/50 hover:bg-accent"
+                title={prompt.reason ?? undefined}
+              >
+                {prompt.text}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Citations */}
       {response.citations.length > 0 && (
         <div>
@@ -123,35 +391,31 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
             <BookOpen className="w-3.5 h-3.5" />
             Citations ({response.citations.length})
           </h4>
-          <div className="space-y-2">
-            {response.citations.map(cit => (
-              <Link
-                key={cit.id}
-                href={`/sources/${cit.sourceId}${cit.chunkId ? `?chunkId=${cit.chunkId}` : ''}`}
-                className="flex items-start gap-3 p-3 bg-accent/50 rounded-lg border border-border/50 transition-colors hover:border-primary/50 hover:bg-accent"
-              >
-                <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                  {cit.index}
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm leading-relaxed">
-                    <HighlightedSnippet text={cit.snippet} query={response.question} />
-                  </p>
-                  <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className="font-medium">Source</span>
-                    <span className="truncate">{cit.sourceTitle}</span>
-                  </div>
-                  {(typeof cit.sourceSpanStart === 'number' || cit.matchedText) && (
-                    <div className="mt-1 text-[11px] text-muted-foreground">
-                      {cit.matchedText && <span className="mr-2">Match: "{cit.matchedText}"</span>}
-                      {typeof cit.sourceSpanStart === 'number' && typeof cit.sourceSpanEnd === 'number' && (
-                        <span>Span: {cit.sourceSpanStart}-{cit.sourceSpanEnd}</span>
-                      )}
-                    </div>
-                  )}
+          <div className="space-y-3">
+            {artifactCitations.length > 0 && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/70 p-3">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-sky-900">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Artifact Evidence ({artifactCitations.length})
                 </div>
-              </Link>
-            ))}
+                <div className="mb-2 text-xs text-sky-900/80">
+                  These citations come from structured multimodal artifacts such as notebook, OCR, table, image, or structure summaries.
+                </div>
+                <div className="space-y-2">
+                  {artifactCitations.map(renderCitationCard)}
+                </div>
+              </div>
+            )}
+            {textCitations.length > 0 && (
+              <div className="space-y-2">
+                {artifactCitations.length > 0 && (
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Text Evidence ({textCitations.length})
+                  </div>
+                )}
+                {textCitations.map(renderCitationCard)}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -203,7 +467,20 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
             <div>Candidate count: {response.diagnostics.candidateCount}</div>
             <div>Retrieval limit: {response.diagnostics.retrievalLimit}</div>
             {response.retrievalDebugId && <div>Debug ID: {response.retrievalDebugId}</div>}
+            {response.diagnostics.planning && <div>Planning strategy: {response.diagnostics.planning.strategy}</div>}
           </div>
+          {response.diagnostics.planning && response.diagnostics.planning.subQueries.length > 0 && (
+            <div className="mt-3 rounded border border-border/50 p-2 text-xs text-muted-foreground">
+              <div className="font-medium text-foreground">Planner steps</div>
+              <div className="mt-1 space-y-1">
+                {response.diagnostics.planning.subQueries.map(step => (
+                  <div key={step.id}>
+                    {step.id}. {step.intent} ({step.role}) - {step.query}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {response.diagnostics.contextCoverage && Object.keys(response.diagnostics.contextCoverage).length > 0 && (
             <div className="mt-3 rounded border border-border/50 p-2 text-xs text-muted-foreground">
               <div className="font-medium text-foreground">Context coverage</div>
@@ -221,6 +498,9 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
                   <div className="font-medium text-foreground">
                     {candidate.candidateType} {candidate.sourceTitle ? `- ${candidate.sourceTitle}` : ''}
                   </div>
+                  {candidate.candidateType === 'artifact_summary' && candidate.sectionTitle && (
+                    <div className="mt-1 text-muted-foreground">artifact: {candidate.sectionTitle}</div>
+                  )}
                   <div className="mt-1 text-muted-foreground">
                     final={candidate.finalScore ?? '-'} rerank={candidate.rerankScore ?? '-'} lexical={candidate.lexicalScore ?? '-'} vector={candidate.vectorScore ?? '-'} authority={candidate.authorityScore ?? '-'}
                   </div>
@@ -236,14 +516,21 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
   )
 }
 
-export default function AskAIPage() {
+function AskAIPageInner() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const searchParams = useSearchParams()
+  const [activeScope, setActiveScope] = useState<AskScope | null>(null)
   const { data: sessions } = useChatSessions()
   const { data: selectedSession } = useChatSession(selectedSessionId)
+  const { data: collections } = useCollections()
   const deleteSession = useDeleteChatSession()
-  const { ask: askQuestion, isLoading, error } = useAskConversation(selectedSessionId)
+  const { ask: askQuestion, isLoading, error } = useAskConversation(selectedSessionId, {
+    sourceId: activeScope?.type === 'source' ? activeScope.id : null,
+    collectionId: activeScope?.type === 'collection' ? activeScope.id : null,
+    pageId: activeScope?.type === 'page' ? activeScope.id : null,
+  })
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const ask = async (question: string) => {
@@ -257,9 +544,23 @@ export default function AskAIPage() {
       if (!selectedSessionId && response.sessionId) {
         setSelectedSessionId(response.sessionId)
       }
+      if (response.scope) {
+        setActiveScope(response.scope)
+      }
       setMessages(prev => [...prev, { id: response.id, role: 'assistant', response }])
     } catch {}
   }
+
+  useEffect(() => {
+    const initialScope = scopeFromSearchParams(searchParams)
+    if (initialScope) {
+      setActiveScope(initialScope)
+    }
+    const prompt = searchParams.get('prompt')
+    if (prompt && !selectedSessionId && messages.length === 0) {
+      setInput(prompt)
+    }
+  }, [messages.length, searchParams, selectedSessionId])
 
   useEffect(() => {
     if (!selectedSession) return
@@ -274,11 +575,32 @@ export default function AskAIPage() {
       return items
     }, [])
     setMessages(restoredMessages)
-  }, [selectedSession])
+    const latestScopedResponse = [...selectedSession.messages]
+      .reverse()
+      .find(message => message.role === 'assistant' && message.response?.scope)
+    if (latestScopedResponse?.response?.scope) {
+      setActiveScope(latestScopedResponse.response.scope)
+    } else {
+      setActiveScope(scopeFromSearchParams(searchParams))
+    }
+  }, [searchParams, selectedSession])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<string>
+      if (customEvent.detail) {
+        ask(customEvent.detail)
+      }
+    }
+    window.addEventListener('ask-followup', handler as EventListener)
+    return () => window.removeEventListener('ask-followup', handler as EventListener)
+  })
+
+  const starterPrompts = starterPromptsForScope(activeScope)
 
   return (
     <div className="flex flex-col h-full">
@@ -351,6 +673,66 @@ export default function AskAIPage() {
         <div className="min-h-0 flex flex-col">
         {/* Messages area */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+          <div className="mx-auto max-w-3xl">
+            <div className="rounded-xl border border-border bg-card/70 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ask scope</div>
+                  {activeScope ? (
+                    <div className="mt-1">
+                      <div className="text-sm font-medium text-foreground">{activeScope.type}: {activeScope.title}</div>
+                      {activeScope.description && <div className="text-xs text-muted-foreground">{activeScope.description}</div>}
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-sm text-muted-foreground">Global knowledge base</div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 md:items-end">
+                  <select
+                    value={activeScope?.type === 'collection' ? activeScope.id : ''}
+                    onChange={event => {
+                      const nextId = event.target.value
+                      if (!nextId) {
+                        if (activeScope?.type === 'collection') setActiveScope(null)
+                        return
+                      }
+                      const collection = collections?.find(item => item.id === nextId)
+                      if (!collection) return
+                      setSelectedSessionId(null)
+                      setMessages([])
+                      setActiveScope({
+                        type: 'collection',
+                        id: collection.id,
+                        title: collection.name,
+                        description: collection.description,
+                        strict: true,
+                        matchedInScope: true,
+                      })
+                    }}
+                    disabled={activeScope?.type === 'source' || activeScope?.type === 'page'}
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
+                  >
+                    <option value="">Global knowledge base</option>
+                    {(collections ?? []).map(collection => (
+                      <option key={collection.id} value={collection.id}>{collection.name}</option>
+                    ))}
+                  </select>
+                  {activeScope && (
+                    <button
+                      onClick={() => {
+                        setSelectedSessionId(null)
+                        setMessages([])
+                        setActiveScope(null)
+                      }}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Clear scope
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
           {messages.length === 0 ? (
             <div className="max-w-2xl mx-auto pt-8">
               <EmptyState
@@ -361,7 +743,7 @@ export default function AskAIPage() {
               <div className="mt-6">
                 <p className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">Suggested Questions</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {SUGGESTED_QUESTIONS.map((q, i) => (
+                  {starterPrompts.map((q, i) => (
                     <button
                       key={i}
                       onClick={() => ask(q)}
@@ -459,5 +841,13 @@ export default function AskAIPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function AskAIPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading Ask AI...</div>}>
+      <AskAIPageInner />
+    </Suspense>
   )
 }

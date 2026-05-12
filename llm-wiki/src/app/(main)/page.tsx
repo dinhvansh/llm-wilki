@@ -22,9 +22,9 @@ function StatCard({ icon: Icon, label, value, subValue, trend }: {
 }) {
   const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus
   return (
-    <div className="bg-card border border-border rounded-lg p-4">
+    <div className="surface-panel rounded-3xl p-5">
       <div className="flex items-start justify-between mb-2">
-        <div className="p-2 rounded-lg bg-primary/10">
+        <div className="rounded-2xl bg-primary/10 p-2.5">
           <Icon className="w-4 h-4 text-primary" />
         </div>
         {trend && <TrendIcon className={`w-4 h-4 ${trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : 'text-muted-foreground'}`} />}
@@ -52,7 +52,7 @@ function QuickActionCard({
   return (
     <Link
       href={href}
-      className="group rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 hover:bg-accent/30"
+      className="surface-panel group rounded-[1.75rem] p-5 transition-colors hover:border-primary/40 hover:bg-accent/30"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-2">
@@ -146,7 +146,7 @@ export default function DashboardPage() {
         }
       />
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6 py-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <QuickActionCard
             href="/sources"
@@ -175,7 +175,7 @@ export default function DashboardPage() {
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Pages published over time */}
-          <div className="lg:col-span-2 bg-card border border-border rounded-lg p-4">
+          <div className="surface-panel lg:col-span-2 rounded-[1.75rem] p-5">
             <h3 className="text-sm font-semibold mb-4">Pages Published Over Time</h3>
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={stats.pagesPublishedOverTime}>
@@ -189,7 +189,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Page status pie */}
-          <div className="bg-card border border-border rounded-lg p-4">
+          <div className="surface-panel rounded-[1.75rem] p-5">
             <h3 className="text-sm font-semibold mb-4">Page Status Distribution</h3>
             <ResponsiveContainer width="100%" height={160}>
               <PieChart>
@@ -213,7 +213,7 @@ export default function DashboardPage() {
         {/* Recent Activity + Failed Jobs */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Recent Activity */}
-          <div className="bg-card border border-border rounded-lg p-4">
+          <div className="surface-panel rounded-[1.75rem] p-5">
             <h3 className="text-sm font-semibold mb-3">Recent Activity</h3>
             <div className="space-y-3">
               {stats.recentActivity.map(item => {
@@ -238,7 +238,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Failed Jobs */}
-          <div className="bg-card border border-border rounded-lg p-4">
+          <div className="surface-panel rounded-[1.75rem] p-5">
             <h3 className="text-sm font-semibold mb-3">Failed Jobs ({stats.failedJobsCount})</h3>
             {stats.failedJobs.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">No failed jobs</p>

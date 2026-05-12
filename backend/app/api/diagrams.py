@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.identity import require_roles
+from app.core.identity import require_permission
 from app.db.database import get_db
 from app.schemas.diagram import DiagramOut, DiagramVersionOut, PaginatedResponse
 from app.services.auth import Actor, actor_metadata
@@ -70,12 +70,13 @@ async def list_diagrams_route(
     pageId: Optional[str] = None,
     sourceId: Optional[str] = None,
     db: Session = Depends(get_db),
+    actor: Actor = Depends(require_permission("diagram:read")),
 ):
     return list_diagrams(db, page=page, page_size=pageSize, status=status, search=search, collection_id=collectionId, page_id=pageId, source_id=sourceId)
 
 
 @router.get("/assess-page/{page_id}")
-async def assess_page_bpm_route(page_id: str, db: Session = Depends(get_db)):
+async def assess_page_bpm_route(page_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
     result = assess_page_bpm_fit(db, page_id)
     if not result:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -83,7 +84,7 @@ async def assess_page_bpm_route(page_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/assess-source/{source_id}")
-async def assess_source_bpm_route(source_id: str, db: Session = Depends(get_db)):
+async def assess_source_bpm_route(source_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
     result = assess_source_bpm_fit(db, source_id)
     if not result:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -91,7 +92,7 @@ async def assess_source_bpm_route(source_id: str, db: Session = Depends(get_db))
 
 
 @router.get("/{slug}", response_model=DiagramOut)
-async def get_diagram_route(slug: str, db: Session = Depends(get_db)):
+async def get_diagram_route(slug: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
     diagram = get_diagram_by_slug(db, slug)
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
@@ -99,21 +100,21 @@ async def get_diagram_route(slug: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{diagram_id}/versions", response_model=list[DiagramVersionOut])
-async def list_diagram_versions_route(diagram_id: str, db: Session = Depends(get_db)):
+async def list_diagram_versions_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
     if not get_diagram_by_id(db, diagram_id):
         raise HTTPException(status_code=404, detail="Diagram not found")
     return get_diagram_versions(db, diagram_id)
 
 
 @router.get("/{diagram_id}/audit")
-async def list_diagram_audit_route(diagram_id: str, limit: int = 50, db: Session = Depends(get_db)):
+async def list_diagram_audit_route(diagram_id: str, limit: int = 50, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
     if not get_diagram_by_id(db, diagram_id):
         raise HTTPException(status_code=404, detail="Diagram not found")
     return get_diagram_audit_logs(db, diagram_id, limit=limit)
 
 
 @router.post("", response_model=DiagramOut)
-async def create_diagram_route(payload: CreateDiagramPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def create_diagram_route(payload: CreateDiagramPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
     return create_diagram(
         db,
         title=payload.title,
@@ -136,7 +137,7 @@ async def generate_diagram_from_page_route(
     page_id: str,
     payload: GenerateDiagramPayload | None = None,
     db: Session = Depends(get_db),
-    actor: Actor = Depends(require_roles("editor", "reviewer", "admin")),
+    actor: Actor = Depends(require_permission("diagram:write")),
 ):
     diagram = generate_diagram_from_page(db, page_id, actor=actor.name)
     if not diagram:
@@ -172,7 +173,7 @@ async def generate_diagram_from_source_route(
     source_id: str,
     payload: GenerateDiagramPayload | None = None,
     db: Session = Depends(get_db),
-    actor: Actor = Depends(require_roles("editor", "reviewer", "admin")),
+    actor: Actor = Depends(require_permission("diagram:write")),
 ):
     diagram = generate_diagram_from_source(db, source_id, actor=actor.name)
     if not diagram:
@@ -204,7 +205,7 @@ async def generate_diagram_from_source_route(
 
 
 @router.post("/{diagram_id}/update", response_model=DiagramOut)
-async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
     try:
         diagram = update_diagram(
             db,
@@ -233,7 +234,7 @@ async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, d
 
 
 @router.post("/{diagram_id}/publish", response_model=DiagramOut)
-async def publish_diagram_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def publish_diagram_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
     diagram = publish_diagram(db, diagram_id, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
@@ -241,7 +242,7 @@ async def publish_diagram_route(diagram_id: str, db: Session = Depends(get_db), 
 
 
 @router.post("/{diagram_id}/submit-review", response_model=DiagramOut)
-async def submit_diagram_review_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def submit_diagram_review_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
     diagram = submit_diagram_for_review(db, diagram_id, actor=actor.name)
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
@@ -249,7 +250,7 @@ async def submit_diagram_review_route(diagram_id: str, db: Session = Depends(get
 
 
 @router.post("/{diagram_id}/approve-review", response_model=DiagramOut)
-async def approve_diagram_review_route(diagram_id: str, payload: ReviewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reviewer", "admin"))):
+async def approve_diagram_review_route(diagram_id: str, payload: ReviewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:approve"))):
     diagram = approve_diagram_review(db, diagram_id, actor=actor.name, comment=payload.comment)
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
@@ -257,7 +258,7 @@ async def approve_diagram_review_route(diagram_id: str, payload: ReviewPayload, 
 
 
 @router.post("/{diagram_id}/request-changes", response_model=DiagramOut)
-async def request_diagram_changes_route(diagram_id: str, payload: ReviewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reviewer", "admin"))):
+async def request_diagram_changes_route(diagram_id: str, payload: ReviewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:approve"))):
     diagram = request_diagram_changes(db, diagram_id, actor=actor.name, comment=payload.comment)
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
@@ -265,7 +266,7 @@ async def request_diagram_changes_route(diagram_id: str, payload: ReviewPayload,
 
 
 @router.post("/{diagram_id}/unpublish", response_model=DiagramOut)
-async def unpublish_diagram_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def unpublish_diagram_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
     diagram = unpublish_diagram(db, diagram_id, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")

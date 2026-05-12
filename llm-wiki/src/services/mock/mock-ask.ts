@@ -6,7 +6,7 @@ const delay = (ms = 600) => new Promise(resolve => setTimeout(resolve, ms))
 
 export function createMockQueryService(): IQueryService {
   return {
-    async ask(question, sessionId) {
+    async ask(question, sessionId, scope) {
       await delay(800)
       // Find matching response or generate a fallback
       const key = Object.keys(MOCK_ASK_RESPONSES).find(k =>
@@ -28,11 +28,26 @@ export function createMockQueryService(): IQueryService {
           intent: 'fact_lookup',
           answerType: 'direct_answer',
           targetEntities: [],
-          filters: {},
+          filters: {
+            ...(scope?.sourceId ? { source_id: scope.sourceId } : {}),
+            ...(scope?.collectionId ? { collection_id: scope.collectionId } : {}),
+            ...(scope?.pageId ? { page_id: scope.pageId } : {}),
+          },
           needsClarification: false,
           clarificationQuestion: null,
           conversationSummary: null,
         },
+        scope: scope?.sourceId
+          ? { type: 'source', id: scope.sourceId, title: 'Scoped Source', strict: true, matchedInScope: true }
+          : scope?.pageId
+            ? { type: 'page', id: scope.pageId, title: 'Scoped Page', strict: true, matchedInScope: true }
+            : scope?.collectionId
+              ? { type: 'collection', id: scope.collectionId, title: 'Scoped Collection', strict: true, matchedInScope: true }
+              : null,
+        suggestedPrompts: [
+          { text: 'Summarize this source first.', category: 'summary', reason: 'Mock guided prompting.' },
+          { text: 'Which source should I trust more?', category: 'authority', reason: 'Mock authority follow-up.' },
+        ],
         citations: [],
         relatedPages: [],
         relatedSources: [],

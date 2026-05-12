@@ -11,6 +11,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   hasRole: (...roles: string[]) => boolean
+  hasPermission: (...permissions: string[]) => boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -78,6 +79,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const minimum = Math.min(...roles.map(role => ROLE_ORDER[role] ?? 99))
       return (ROLE_ORDER[user.role] ?? -1) >= minimum
     },
+    hasPermission: (...permissions: string[]) => {
+      if (!user) return false
+      const userPermissions = new Set(user.permissions || [])
+      return permissions.some(permission => userPermissions.has(permission) || userPermissions.has('*'))
+    },
   }), [isLoading, token, user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
@@ -88,4 +94,3 @@ export function useAuth() {
   if (!context) throw new Error('useAuth must be used inside AuthProvider')
   return context
 }
-

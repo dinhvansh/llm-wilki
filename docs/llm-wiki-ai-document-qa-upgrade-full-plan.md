@@ -5,10 +5,10 @@
 | Scope | Status | Verified On |
 |---|---|---|
 | Phase 1 - Ask AI retrieval and answer quality | Done | local regression, benchmark, Docker smoke, E2E smoke on 2026-05-04 |
-| Phase 2 - Ingest metadata and semantic structure | Planned | Not started |
-| Phase 3 - Knowledge units and retrieval objects | Planned | Not started |
-| Phase 4 - Eval, benchmark, and quality gates | Planned | Not started |
-| Current overall state | Planning | This file is implementation backlog and checklist |
+| Phase 2 - Ingest metadata and semantic structure | Done | local regression, frontend build, and retrieval benchmark on 2026-05-04 |
+| Phase 3 - Knowledge units and retrieval objects | Done | local regression, frontend build, and retrieval benchmark on 2026-05-04 |
+| Phase 4 - Eval, benchmark, and quality gates | Done | persisted eval runs, tag-based subsets, release compare flow, and admin evidence drilldown on 2026-05-05 |
+| Current overall state | Phase 4 done | Ask AI now retrieves chunks + claims + page summaries + section summaries + knowledge units, with candidate-backed provenance, intent-aware comparison/conflict context, persisted quality runs, tag-based eval subsets, benchmark quality gates, admin quality dashboards with evidence drilldown, and release compare flow |
 
 ## Verification Format
 
@@ -189,14 +189,14 @@ Muc tieu:
 - giup retrieval khop dung document role thay vi chi match tu khoa
 
 Checklist:
-- [ ] Them document-type classification theo content purpose
-- [ ] Them section-role detection
-- [ ] Them semantic-unit chunking rules theo `sop / policy / report / glossary`
-- [ ] Them parent chunk / section summary
-- [ ] Enrich metadata cho chunk va section
-- [ ] Bo sung source metadata: `source_status`, `source_type`, `authority_level`, `effective_date`, `version`, `owner`
-- [ ] Cho phep manual override document type / authority neu classifier khong chac
-- [ ] Them regression test cho parser/chunker metadata moi
+- [x] Them document-type classification theo content purpose
+- [x] Them section-role detection
+- [x] Them semantic-unit chunking rules theo `sop / policy / report / glossary`
+- [x] Them parent chunk / section summary
+- [x] Enrich metadata cho chunk va section
+- [x] Bo sung source metadata: `source_status`, `source_type`, `authority_level`, `effective_date`, `version`, `owner`
+- [x] Cho phep manual override document type / authority neu classifier khong chac
+- [x] Them regression test cho parser/chunker metadata moi
 
 Acceptance criteria:
 - chunk moi co du metadata toi thieu de retrieval filter va rerank
@@ -204,10 +204,23 @@ Acceptance criteria:
 - source metadata du de giai quyet conflict `old vs new`, `draft vs approved`, `policy vs note`
 
 Implementation log:
-- Pending
+- 2026-05-04: Extended `backend/app/schemas/source.py`, `backend/app/services/sources.py`, and `backend/app/api/sources.py` so source responses now expose `documentType`, `sourceStatus`, `authorityLevel`, `effectiveDate`, `version`, and `owner`.
+- 2026-05-04: Added `PATCH /api/sources/{id}` for editor/reviewer/admin metadata overrides, with validation and audit logging in `update_source_metadata()`.
+- 2026-05-04: Added heuristic document-type classification and section-role tagging in `backend/app/core/ingest.py`, and persisted the inferred metadata into ingest stage results/source metadata.
+- 2026-05-04: Updated `llm-wiki/src/app/(main)/sources/[id]/page.tsx`, hooks, service contracts, and source types so Source Detail can view/edit authority and source metadata.
+- 2026-05-04: Added `backend/scripts/test_phase34.py` and wired it into `scripts/run_regression.ps1`.
+- 2026-05-04: Added plain-text heading promotion, semantic-unit chunking, section summary generation, and parent section linkage in `backend/app/core/ingest.py` and `backend/app/services/sources.py`.
+- 2026-05-04: Extended Source Detail chunk inspector to show `sectionRole`, heading path, parent section title, and section summaries. Added `backend/scripts/test_phase35.py`.
+- 2026-05-04: Enriched source/chunk/claim/knowledge-unit metadata with `documentType`, `sectionRole`, `language`, `keywords`, and parent section context for downstream retrieval and debugging.
+- 2026-05-04: Updated retrieval benchmark to measure section-summary candidate behavior.
 
 Verification:
-- Pending
+- Local: `python backend\scripts\test_phase34.py` PASS.
+- Local: `python backend\scripts\test_phase35.py` PASS.
+- Local: `python backend\scripts\benchmark_retrieval.py` PASS.
+- Local: `python backend\scripts\test_phase33.py` PASS.
+- Local: `python -m compileall backend\app backend\scripts` PASS.
+- Frontend: `npm --prefix llm-wiki run build` PASS.
 
 ### Phase 3: Retrieval Objects And Knowledge Units
 
@@ -216,14 +229,14 @@ Muc tieu:
 - dua tri thuc co cau truc vao Ask AI va page generation
 
 Checklist:
-- [ ] Them / chuan hoa `source_sections`
-- [ ] Them / chuan hoa `section_summaries`
-- [ ] Them / chuan hoa `page_summaries`
-- [ ] Chuan hoa `knowledge_units`
-- [ ] Index retrieval cho `claims`, `section summaries`, `page summaries`, `knowledge_units`
-- [ ] Them retrieval policy theo intent: definition / procedure / policy / comparison / conflict
-- [ ] Them citation/provenance link day du tu retrieval object ve source evidence
-- [ ] Them regression test cho multi-object retrieval
+- [x] Them / chuan hoa `source_sections`
+- [x] Them / chuan hoa `section_summaries`
+- [x] Them / chuan hoa `page_summaries`
+- [x] Chuan hoa `knowledge_units`
+- [x] Index retrieval cho `claims`, `section summaries`, `page summaries`, `knowledge_units`
+- [x] Them retrieval policy theo intent: definition / procedure / policy / comparison / conflict
+- [x] Them citation/provenance link day du tu retrieval object ve source evidence
+- [x] Them regression test cho multi-object retrieval
 
 Acceptance criteria:
 - query dinh nghia uu tien glossary / definition units khi phu hop
@@ -231,10 +244,22 @@ Acceptance criteria:
 - query policy/conflict co the trich duoc rule + exception + authority context
 
 Implementation log:
-- Pending
+- 2026-05-04: Added `section_summary` candidate retrieval branch in `backend/app/services/query.py`, including authority-aware scoring, rerank support, and context assembly with `sectionKey`.
+- 2026-05-04: Added `backend/scripts/test_phase36.py` to verify `section_summary` enters top candidates and selected context for procedural queries.
+- 2026-05-04: Added normalized `sourceSections` metadata objects plus Source Detail debug surface, and introduced first-pass intent retrieval policy weights/preferences in `backend/app/services/query.py`.
+- 2026-05-04: Added `knowledge_unit` retrieval branch, normalized `knowledge_unit.unit_type` taxonomy, and candidate-backed citations for `section_summary` / `knowledge_unit` evidence in `backend/app/services/query.py` and `backend/app/services/sources.py`.
+- 2026-05-04: Completed intent-aware comparison/conflict context assembly so `Ask AI` now emits `comparison_a`, `comparison_b`, `conflict_side_a`, and `conflict_side_b` roles with authority-aware conflict preference.
 
 Verification:
-- Pending
+- Local: `python backend\scripts\test_phase36.py` PASS.
+- Local: `python backend\scripts\test_phase37.py` PASS.
+- Local: `python backend\scripts\test_phase38.py` PASS.
+- Local: `python backend\scripts\test_phase39.py` PASS.
+- Local: `python backend\scripts\test_phase40.py` PASS.
+- Local: `python backend\scripts\test_phase41.py` PASS.
+- Local: `python -m compileall backend\app backend\scripts` PASS.
+- Frontend: `npm --prefix llm-wiki run build` PASS.
+- Local: `python backend\scripts\benchmark_retrieval.py` PASS.
 
 ### Phase 4: Eval, Benchmark, And Quality Gates
 
@@ -243,13 +268,13 @@ Muc tieu:
 - khoa chat regression khi thay doi prompt/retrieval
 
 Checklist:
-- [ ] Tao fixed eval set
-- [ ] Them eval runner
-- [ ] Them benchmark command cho retrieval/answer quality
-- [ ] Them metrics: recall, precision, faithfulness, unsupported claim rate
-- [ ] Them quality gate cho conflict handling va clarification accuracy
-- [ ] Them lint / check cho unsupported claims, stale source, authority mismatch
-- [ ] Them admin/debug surface de doc ket qua eval
+- [x] Tao fixed eval set
+- [x] Them eval runner
+- [x] Them benchmark command cho retrieval/answer quality
+- [x] Them metrics: recall, precision, faithfulness, unsupported claim rate
+- [x] Them quality gate cho conflict handling va clarification accuracy
+- [x] Them lint / check cho unsupported claims, stale source, authority mismatch
+- [x] Them admin/debug surface de doc ket qua eval
 
 Acceptance criteria:
 - moi thay doi retrieval quan trong deu co benchmark truoc/sau
@@ -257,10 +282,38 @@ Acceptance criteria:
 - co baseline metrics de so sanh qua cac sprint
 
 Implementation log:
-- Pending
+- 2026-05-04: Added `section_summary` retrieval branch to `backend/app/services/query.py`, including scoring, rerank support, and `sectionKey` in selected context/debug diagnostics.
+- 2026-05-04: Added `knowledge_unit` retrieval branch to `backend/app/services/query.py` with intent-aware boosts for policy/procedure-style queries.
+- 2026-05-04: Added `backend/scripts/test_phase36.py` and `backend/scripts/test_phase37.py` to verify multi-object retrieval behavior for section summaries and knowledge units.
+- 2026-05-04: Extended Ask AI citations so `section_summary` and `knowledge_unit` evidence now produce candidate-backed provenance payloads instead of chunk-only citations.
+- 2026-05-04: Normalized `knowledge_unit.unit_type` during ingest to taxonomy such as `procedure_step`, `threshold`, and `warning`, with regression coverage in `backend/scripts/test_phase39.py`.
+- 2026-05-04: Extended `backend/scripts/benchmark_retrieval.py` with quality gates for authority signal, section-summary signal, and structured chunk stability; benchmark now fails if those gates regress.
+- 2026-05-04: Added `backend/scripts/test_phase41.py` to lock comparison/conflict retrieval policy and source-priority behavior.
+- 2026-05-04: Extended `backend/evals/golden_dataset.json` and `backend/scripts/evaluate_quality.py` into a fixed Ask AI eval runner covering clarification, follow-up resolution, source lookup, and authority-aware conflict handling, with report artifacts written to `backend/evals/last_eval_report.{json,md}`.
+- 2026-05-04: Added lint rules `authority_mismatch_sources` and `archived_source_link` in `backend/app/services/lint.py`, wired them into quality gates, and added regression `backend/scripts/test_phase42.py`.
+- 2026-05-04: Added `backend/app/api/admin.py:/quality` plus admin UI updates in `llm-wiki/src/app/(main)/admin/page.tsx` so admins can inspect latest eval/benchmark gates, behavior metrics, failed cases, and rerun commands from the product UI.
+- 2026-05-04: Added retrieval/rerank/faithfulness metrics to `backend/scripts/evaluate_quality.py` (`retrievalRecallAt5`, `retrievalRecallAt10`, `rerankPrecisionAt5`, `answerFaithfulness`) and locked them with regression `backend/scripts/test_phase43.py`.
+- 2026-05-05: Added persisted `eval_runs` storage via `backend/app/models/records.py`, migration `backend/migrations/versions/0012_eval_runs.py`, and helper service `backend/app/services/quality_runs.py`. `benchmark_retrieval.py` and `evaluate_quality.py` now write each run to DB, and admin quality view now shows recent run history from persisted records.
+- 2026-05-05: Added tag-aware subset execution to `backend/scripts/evaluate_quality.py` (`--tag ...`), tagged the golden eval dataset, and enriched behavior case results with citations/related pages/related sources so admin can drill from a failed case to relevant evidence surfaces.
+- 2026-05-05: Added `backend/scripts/manage_eval_dataset.py` for dataset import/export, `backend/scripts/compare_quality_runs.py` for before/after comparisons between persisted runs, and `docs/QUALITY_RELEASE_CHECKLIST.md` to define the release rail for eval/benchmark changes.
 
 Verification:
-- Pending
+- Local: `python backend\scripts\test_phase36.py` PASS.
+- Local: `python backend\scripts\test_phase37.py` PASS.
+- Local: `python backend\scripts\test_phase38.py` PASS.
+- Local: `python backend\scripts\test_phase39.py` PASS.
+- Local: `python backend\scripts\test_phase41.py` PASS.
+- Local: `python backend\scripts\test_phase42.py` PASS.
+- Local: `python backend\scripts\test_phase43.py` PASS.
+- Local: `python backend\scripts\test_phase44.py` PASS.
+- Local: `python backend\scripts\test_phase45.py` PASS.
+- Local: `python backend\scripts\test_phase46.py` PASS.
+- Local: `python backend\scripts\test_phase47.py` PASS.
+- Local: `python backend\scripts\benchmark_retrieval.py` PASS.
+- Local: `python backend\scripts\evaluate_quality.py` PASS.
+- Local: `python backend\scripts\evaluate_quality.py --tag followup` PASS.
+- Local: `python -m compileall backend\app backend\scripts` PASS.
+- Frontend: `npm --prefix llm-wiki run build` PASS.
 
 ---
 
@@ -559,13 +612,13 @@ Files likely touched:
 - `llm-wiki/src/app/(main)/sources/*`
 
 Checklist:
-- [ ] Them metadata source: `source_status`
-- [ ] Them metadata source: `authority_level`
-- [ ] Them metadata source: `effective_date`
-- [ ] Them metadata source: `version`
-- [ ] Them metadata source: `owner`
-- [ ] Them serialize/deserialize cho source metadata moi
-- [ ] Hien va sua metadata nay trong Source Detail neu user co quyen
+- [x] Them metadata source: `source_status`
+- [x] Them metadata source: `authority_level`
+- [x] Them metadata source: `effective_date`
+- [x] Them metadata source: `version`
+- [x] Them metadata source: `owner`
+- [x] Them serialize/deserialize cho source metadata moi
+- [x] Hien va sua metadata nay trong Source Detail neu user co quyen
 
 Acceptance criteria:
 - moi source co du metadata toi thieu de Phase 1 authority-aware retrieval dung duoc
@@ -583,11 +636,11 @@ Files likely touched:
 - script regression moi
 
 Checklist:
-- [ ] Them classifier cho `document_type`
+- [x] Them classifier cho `document_type`
 - [ ] Ho tro cac type: `sop`, `policy`, `report`, `proposal`, `meeting_note`, `reference`, `glossary`, `contract`, `email`, `technical_doc`, `unknown`
-- [ ] Luu `document_type`, `classification_confidence`, `classification_reason`
-- [ ] Fallback ve heuristic khi LLM classifier unavailable
-- [ ] Cho phep override document type bang tay
+- [x] Luu `document_type`, `classification_confidence`, `classification_reason`
+- [x] Fallback ve heuristic khi LLM classifier unavailable
+- [x] Cho phep override document type bang tay
 
 Acceptance criteria:
 - source moi ingest duoc gan `document_type` hop ly
@@ -604,11 +657,11 @@ Files likely touched:
 - `backend/app/schemas/source.py`
 
 Checklist:
-- [ ] Them `section_role` cho section/chunk
+- [x] Them `section_role` cho section/chunk
 - [ ] Ho tro role theo `sop`
-- [ ] Ho tro role theo `policy`
-- [ ] Ho tro role theo `report/proposal`
-- [ ] Ho tro role theo `glossary/reference`
+- [x] Ho tro role theo `policy`
+- [x] Ho tro role theo `report/proposal`
+- [x] Ho tro role theo `glossary/reference`
 - [ ] Luu confidence va ly do detect neu can
 
 Acceptance criteria:
@@ -625,12 +678,12 @@ Files likely touched:
 - test scripts lien quan den chunking/benchmark
 
 Checklist:
-- [ ] Them semantic chunking strategy theo `document_type`
+- [x] Them semantic chunking strategy theo `document_type`
 - [ ] SOP chunk theo step/decision/exception unit
-- [ ] Policy chunk theo rule/condition/exception/threshold unit
+- [x] Policy chunk theo rule/condition/exception/threshold unit
 - [ ] Report/proposal chunk theo problem/goal/solution/risk unit
 - [ ] Giu lai image/table/list/context gan nhau khi thuoc cung semantic unit
-- [ ] Fallback ve structured/window chunking khi khong du signal
+- [x] Fallback ve structured/window chunking khi khong du signal
 
 Acceptance criteria:
 - chunk moi dai vua du, co tinh doc lap, va khong cat dut nghia quan trong
@@ -649,10 +702,10 @@ Files likely touched:
 
 Checklist:
 - [ ] Them concept `source_sections`
-- [ ] Them `section_summary`
-- [ ] Link child chunks voi parent section
-- [ ] Luu heading path / section range / page range phu hop
-- [ ] Expose section summary trong source detail va retrieval diagnostics
+- [x] Them `section_summary`
+- [x] Link child chunks voi parent section
+- [x] Luu heading path / section range / page range phu hop
+- [x] Expose section summary trong source detail va retrieval diagnostics
 
 Acceptance criteria:
 - khi retrieve trung child chunk nho, he thong co the mang theo parent section summary
@@ -692,12 +745,12 @@ Files likely touched:
 - `scripts/run_regression.ps1`
 
 Checklist:
-- [ ] Them regression cho document-type classification
-- [ ] Them regression cho section-role detection
-- [ ] Them regression cho semantic chunking
-- [ ] Them regression cho parent section summary
+- [x] Them regression cho document-type classification
+- [x] Them regression cho section-role detection
+- [x] Them regression cho semantic chunking
+- [x] Them regression cho parent section summary
 - [ ] Cap nhat benchmark retrieval so sanh chunking cu/moi
-- [ ] Hook vao `run_regression.ps1`
+- [x] Hook vao `run_regression.ps1`
 
 Acceptance criteria:
 - phase 2 co regression rieng va benchmark truoc/sau
@@ -717,15 +770,15 @@ Acceptance criteria:
 
 ### Phase 2 Done Checklist
 
-- [ ] Source metadata authority/status/version/effective date da co
-- [ ] Document type da duoc classify va override duoc
-- [ ] Section role da duoc gan cho section/chunk
-- [ ] Semantic unit chunking da thay the logic cat thuan text o cac doc type chinh
-- [ ] Parent section summary da available cho retrieval/debug
-- [ ] Metadata enrichment da co trong source detail
-- [ ] Regression local pass
-- [ ] Frontend build pass
-- [ ] Benchmark retrieval lien quan pass
+- [x] Source metadata authority/status/version/effective date da co
+- [x] Document type da duoc classify va override duoc
+- [x] Section role da duoc gan cho section/chunk
+- [x] Semantic unit chunking da thay the logic cat thuan text o cac doc type chinh
+- [x] Parent section summary da available cho retrieval/debug
+- [x] Metadata enrichment da co trong source detail
+- [x] Regression local pass
+- [x] Frontend build pass
+- [x] Benchmark retrieval lien quan pass
 
 ---
 
@@ -745,11 +798,11 @@ Files likely touched:
 - migration moi neu can
 
 Checklist:
-- [ ] Chuan hoa `source_sections`
-- [ ] Chuan hoa `section_summaries`
-- [ ] Chuan hoa `page_summaries`
-- [ ] Xac dinh relation giua source/chunk/claim/page/knowledge_unit
-- [ ] Chuan hoa ID va provenance link giua object retrieval
+- [x] Chuan hoa `source_sections`
+- [x] Chuan hoa `section_summaries`
+- [x] Chuan hoa `page_summaries`
+- [x] Xac dinh relation giua source/chunk/claim/page/knowledge_unit
+- [x] Chuan hoa ID va provenance link giua object retrieval
 
 Acceptance criteria:
 - moi retrieval object truy duoc ve source evidence goc
@@ -767,10 +820,10 @@ Files likely touched:
 - `backend/app/api/sources.py`
 
 Checklist:
-- [ ] Chuan hoa `unit_type`
-- [ ] Ho tro unit type: `definition`, `rule`, `procedure_step`, `condition`, `exception`, `threshold`, `warning`, `decision`, `relationship`, `example`
+- [x] Chuan hoa `unit_type`
+- [x] Ho tro unit type: `definition`, `rule`, `procedure_step`, `condition`, `exception`, `threshold`, `warning`, `decision`, `relationship`, `example`
 - [ ] Luu `source_ids`, `chunk_ids`, `entities`, `confidence`, `verification_status`
-- [ ] Gan metadata authority/provenance vao knowledge unit neu can
+- [x] Gan metadata authority/provenance vao knowledge unit neu can
 - [ ] Expose knowledge units ro hon trong source detail/API
 
 Acceptance criteria:
@@ -788,10 +841,10 @@ Files likely touched:
 - `backend/app/models/records.py`
 
 Checklist:
-- [ ] Chuan hoa summary ngan cho moi page
-- [ ] Luu summary quality/provenance neu can
-- [ ] Them retrieval policy uu tien page summary voi query overview/summary/definition
-- [ ] Link page summary ve page slug/source ids
+- [x] Chuan hoa summary ngan cho moi page
+- [x] Luu summary quality/provenance neu can
+- [x] Them retrieval policy uu tien page summary voi query overview/summary/definition
+- [x] Link page summary ve page slug/source ids
 
 Acceptance criteria:
 - query tong quan khong phai luc nao cung can day raw chunk vao answer
@@ -808,12 +861,12 @@ Files likely touched:
 - `backend/app/core/runtime_config.py`
 
 Checklist:
-- [ ] Them retrieval branch cho `claims`
-- [ ] Them retrieval branch cho `section summaries`
-- [ ] Them retrieval branch cho `page summaries`
-- [ ] Them retrieval branch cho `knowledge_units`
-- [ ] Chuan hoa candidate scoring giua object types
-- [ ] Them object-specific boost theo intent
+- [x] Them retrieval branch cho `claims`
+- [x] Them retrieval branch cho `section summaries`
+- [x] Them retrieval branch cho `page summaries`
+- [x] Them retrieval branch cho `knowledge_units`
+- [x] Chuan hoa candidate scoring giua object types
+- [x] Them object-specific boost theo intent
 
 Acceptance criteria:
 - he thong co the retrieve object dung loai voi y dinh cau hoi
@@ -829,12 +882,12 @@ Files likely touched:
 - regression/eval scripts lien quan
 
 Checklist:
-- [ ] Definition -> uu tien glossary/definition unit/page summary
-- [ ] Procedure -> uu tien procedure_step/section summary/chunk step
-- [ ] Policy -> uu tien rule/condition/exception/threshold
-- [ ] Comparison -> can evidence cho ca hai ben
-- [ ] Conflict -> uu tien claims + authority metadata + latest approved sources
-- [ ] Source lookup -> uu tien page/source metadata va provenance
+- [x] Definition -> uu tien glossary/definition unit/page summary
+- [x] Procedure -> uu tien procedure_step/section summary/chunk step
+- [x] Policy -> uu tien rule/condition/exception/threshold
+- [x] Comparison -> can evidence cho ca hai ben
+- [x] Conflict -> uu tien claims + authority metadata + latest approved sources
+- [x] Source lookup -> uu tien page/source metadata va provenance
 
 Acceptance criteria:
 - retrieval policy thay doi theo intent thay vi top-k chung
@@ -852,11 +905,11 @@ Files likely touched:
 - `backend/app/schemas/query.py`
 
 Checklist:
-- [ ] Link `knowledge_unit -> chunk/source`
-- [ ] Link `page_summary -> page -> source`
-- [ ] Link `section_summary -> section -> child_chunks`
-- [ ] Them citation payload cho object khong phai chunk
-- [ ] Dam bao UI van mo duoc source evidence tu object da retrieve
+- [x] Link `knowledge_unit -> chunk/source`
+- [x] Link `page_summary -> page -> source`
+- [x] Link `section_summary -> section -> child_chunks`
+- [x] Them citation payload cho object khong phai chunk
+- [x] Dam bao UI van mo duoc source evidence tu object da retrieve
 
 Acceptance criteria:
 - khong co retrieval object "mo côi" khong trace ve source goc
@@ -873,11 +926,11 @@ Files likely touched:
 - `scripts/run_regression.ps1`
 
 Checklist:
-- [ ] Them regression cho query definition
-- [ ] Them regression cho query procedure
-- [ ] Them regression cho query policy/conflict
-- [ ] Them regression cho multi-object provenance
-- [ ] Them benchmark precision theo object type
+- [x] Them regression cho query definition
+- [x] Them regression cho query procedure
+- [x] Them regression cho query policy/conflict
+- [x] Them regression cho multi-object provenance
+- [x] Them benchmark precision theo object type
 
 Acceptance criteria:
 - retrieval object moi co regression rieng
@@ -897,13 +950,13 @@ Acceptance criteria:
 
 ### Phase 3 Done Checklist
 
-- [ ] `source_sections`, `section_summaries`, `page_summaries` da chuan hoa
-- [ ] `knowledge_units` da co schema va provenance dung duoc
-- [ ] Retrieval da ho tro nhieu object type trong pipeline chung
-- [ ] Intent-specific policy da anh huong den candidate selection
-- [ ] Provenance/citation cho object moi van mo duoc ve source goc
-- [ ] Regression local pass
-- [ ] Benchmark retrieval lien quan pass
+- [x] `source_sections`, `section_summaries`, `page_summaries` da chuan hoa
+- [x] `knowledge_units` da co schema va provenance dung duoc
+- [x] Retrieval da ho tro nhieu object type trong pipeline chung
+- [x] Intent-specific policy da anh huong den candidate selection
+- [x] Provenance/citation cho object moi van mo duoc ve source goc
+- [x] Regression local pass
+- [x] Benchmark retrieval lien quan pass
 
 ---
 
@@ -922,10 +975,10 @@ Files likely touched:
 - migration moi neu can
 
 Checklist:
-- [ ] Them model hoac file store cho `eval_cases`
-- [ ] Ho tro `question`, `chat_history`, `collection_id`, `expected_sources`, `expected_chunks`, `expected_behavior`
-- [ ] Seed bo case toi thieu cho follow-up, ambiguity, conflict, insufficient evidence, source lookup
-- [ ] Co helper import/export eval cases
+- [x] Them model hoac file store cho `eval_cases`
+- [x] Ho tro `question`, `chat_history`, `collection_id`, `expected_sources`, `expected_chunks`, `expected_behavior`
+- [x] Seed bo case toi thieu cho follow-up, ambiguity, conflict, insufficient evidence, source lookup
+- [x] Co helper import/export eval cases
 
 Acceptance criteria:
 - co bo eval co the chay lap lai nhieu lan
@@ -942,10 +995,10 @@ Files likely touched:
 - `backend/app/models/records.py`
 
 Checklist:
-- [ ] Them `eval_runs`
-- [ ] Chay tung case qua Ask pipeline that
-- [ ] Luu output, retrieval debug, answer, va metrics cho moi case
-- [ ] Ho tro run full set hoac subset theo tag
+- [x] Them `eval_runs`
+- [x] Chay tung case qua Ask pipeline that
+- [x] Luu output, retrieval debug, answer, va metrics cho moi case
+- [x] Ho tro run full set hoac subset theo tag
 
 Acceptance criteria:
 - moi run co ID, config, metrics, va artifacts debug co the doc lai
@@ -961,15 +1014,15 @@ Files likely touched:
 - `backend/app/core/reliability.py`
 
 Checklist:
-- [ ] Them `retrieval_recall@5`
-- [ ] Them `retrieval_recall@10`
-- [ ] Them `rerank_precision@5`
-- [ ] Them `citation_precision`
-- [ ] Them `answer_faithfulness`
-- [ ] Them `unsupported_claim_rate`
-- [ ] Them `followup_resolution_success`
-- [ ] Them `conflict_handling_accuracy`
-- [ ] Them `clarification_accuracy`
+- [x] Them `retrieval_recall@5`
+- [x] Them `retrieval_recall@10`
+- [x] Them `rerank_precision@5`
+- [x] Them `citation_precision`
+- [x] Them `answer_faithfulness`
+- [x] Them `unsupported_claim_rate`
+- [x] Them `followup_resolution_success`
+- [x] Them `conflict_handling_accuracy`
+- [x] Them `clarification_accuracy`
 
 Acceptance criteria:
 - metrics tach ro retrieval, rerank, grounding, va behavior
@@ -986,11 +1039,11 @@ Files likely touched:
 - `backend/scripts/run_regression.ps1`
 
 Checklist:
-- [ ] Them check unsupported claims cho Ask answer khi can
-- [ ] Them check stale source citation
-- [ ] Them check authority mismatch
-- [ ] Them threshold gate cho benchmark quan trong
-- [ ] Neu metrics rot threshold thi regression script phai fail ro rang
+- [x] Them check unsupported claims cho Ask answer khi can
+- [x] Them check stale source citation
+- [x] Them check authority mismatch
+- [x] Them threshold gate cho benchmark quan trong
+- [x] Neu metrics rot threshold thi regression script phai fail ro rang
 
 Acceptance criteria:
 - retrieval/answer changes khong the merge am tham khi metrics giam manh
@@ -1007,10 +1060,10 @@ Files likely touched:
 - frontend types/services lien quan
 
 Checklist:
-- [ ] Hien tong quan eval runs
-- [ ] Hien metrics chinh theo run
-- [ ] Hien failed cases va retrieval debug cua tung case
-- [ ] Link tu failed case den source/page evidence lien quan
+- [x] Hien tong quan eval runs
+- [x] Hien metrics chinh theo run
+- [x] Hien failed cases va retrieval debug cua tung case
+- [x] Link tu failed case den source/page evidence lien quan
 
 Acceptance criteria:
 - admin khong can doc log thô de biet retrieval dang hong o dau
@@ -1027,10 +1080,10 @@ Files likely touched:
 - `UPDATE_PLAN_2.md` hoac plan lien quan khi rollout
 
 Checklist:
-- [ ] Them benchmark/eval command vao regression script
-- [ ] Ghi huong dan chay eval vao README/doc
-- [ ] Dinh nghia checklist release co benchmark before/after
-- [ ] Cap nhat plan status khi phase verified
+- [x] Them benchmark/eval command vao regression script
+- [x] Ghi huong dan chay eval vao README/doc
+- [x] Dinh nghia checklist release co benchmark before/after
+- [x] Cap nhat plan status khi phase verified
 
 Acceptance criteria:
 - eval va benchmark tro thanh mot phan cua quy trinh thay doi retrieval
@@ -1049,13 +1102,13 @@ Acceptance criteria:
 
 ### Phase 4 Done Checklist
 
-- [ ] Eval dataset co bo case co dinh va import/export duoc
-- [ ] Eval runner luu run + metrics + debug artifacts
-- [ ] Metrics retrieval/rerank/faithfulness/clarification da co
-- [ ] Quality gate da noi vao regression
-- [ ] Admin xem duoc failed cases va debug detail
-- [ ] Regression local pass
-- [ ] Benchmark/eval pass theo threshold da dat
+- [x] Eval dataset co bo case co dinh va import/export duoc
+- [x] Eval runner luu run + metrics + debug artifacts
+- [x] Metrics retrieval/rerank/faithfulness/clarification da co
+- [x] Quality gate da noi vao regression
+- [x] Admin xem duoc failed cases va debug detail
+- [x] Regression local pass
+- [x] Benchmark/eval pass theo threshold da dat
 
 ---
 

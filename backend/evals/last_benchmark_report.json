@@ -1,0 +1,181 @@
+{
+  "success": true,
+  "queryCount": 4,
+  "search": [
+    {
+      "query": "citation accuracy",
+      "ms": 40.48,
+      "hits": 5,
+      "top": "Citation accuracy must exceed 90 percent for grounded answers."
+    },
+    {
+      "query": "hybrid retrieval",
+      "ms": 8.53,
+      "hits": 6,
+      "top": "RAG Architecture"
+    },
+    {
+      "query": "safety evaluation framework",
+      "ms": 14.46,
+      "hits": 5,
+      "top": "Safety Evaluation Framework"
+    },
+    {
+      "query": "API authentication",
+      "ms": 7.7,
+      "hits": 2,
+      "top": "API Reference & Integration Guide (Authentication and Authorization)"
+    }
+  ],
+  "ask": [
+    {
+      "query": "citation accuracy",
+      "ms": 43.89,
+      "citations": 1,
+      "candidateCount": 6
+    },
+    {
+      "query": "hybrid retrieval",
+      "ms": 32.25,
+      "citations": 1,
+      "candidateCount": 6
+    },
+    {
+      "query": "safety evaluation framework",
+      "ms": 91.56,
+      "citations": 1,
+      "candidateCount": 5
+    },
+    {
+      "query": "API authentication",
+      "ms": 21.87,
+      "citations": 0,
+      "candidateCount": 1
+    }
+  ],
+  "chunkModeComparison": {
+    "structured": {
+      "mode": "structured",
+      "chunkCount": 4,
+      "avgWords": 26.5,
+      "citationStability": 1.0,
+      "anchorResults": [
+        {
+          "anchor": "Employee completes the expense form within 7 days.",
+          "exactOneChunk": true,
+          "sectionTitle": "Submission Steps",
+          "headingPath": [
+            "Expense Reimbursement Workflow",
+            "Submission Steps"
+          ],
+          "blockTypes": [
+            "list"
+          ]
+        },
+        {
+          "anchor": "If receipts are missing, the manager must approve an excepti",
+          "exactOneChunk": true,
+          "sectionTitle": "Approval Rules",
+          "headingPath": [
+            "Expense Reimbursement Workflow",
+            "Approval Rules"
+          ],
+          "blockTypes": [
+            "list"
+          ]
+        },
+        {
+          "anchor": "| Submission review | Finance | 2 business days |",
+          "exactOneChunk": true,
+          "sectionTitle": "SLA Metrics",
+          "headingPath": [
+            "Expense Reimbursement Workflow",
+            "SLA Metrics"
+          ],
+          "blockTypes": [
+            "table"
+          ]
+        }
+      ]
+    },
+    "window": {
+      "mode": "window",
+      "chunkCount": 1,
+      "avgWords": 121,
+      "citationStability": 1.0,
+      "anchorResults": [
+        {
+          "anchor": "Employee completes the expense form within 7 days.",
+          "exactOneChunk": true,
+          "sectionTitle": "Notes",
+          "headingPath": [],
+          "blockTypes": []
+        },
+        {
+          "anchor": "If receipts are missing, the manager must approve an excepti",
+          "exactOneChunk": true,
+          "sectionTitle": "Notes",
+          "headingPath": [],
+          "blockTypes": []
+        },
+        {
+          "anchor": "| Submission review | Finance | 2 business days |",
+          "exactOneChunk": true,
+          "sectionTitle": "Notes",
+          "headingPath": [],
+          "blockTypes": []
+        }
+      ]
+    }
+  },
+  "authorityBeforeAfter": {
+    "query": "What is the credit approval threshold policy?",
+    "legacyChunkOnlyTopSource": "Approved Credit Policy",
+    "improvedPreferredSource": "Approved Credit Policy",
+    "improvedTopCandidateType": "chunk",
+    "improvedHasConflictSignal": true,
+    "improvedHasRerankSignal": true
+  },
+  "sectionSummarySignal": {
+    "query": "What are the prerequisites before access approval starts?",
+    "topCandidateTypes": [
+      "section_summary",
+      "notebook_note",
+      "notebook_note",
+      "chunk",
+      "section_summary"
+    ],
+    "selectedContextTypes": [
+      "section_summary",
+      "section_summary",
+      "notebook_note",
+      "notebook_note"
+    ],
+    "hasSectionSummaryCandidate": true
+  },
+  "notebookSignal": {
+    "query": "Give a summary of the access approval SOP.",
+    "topCandidateTypes": [
+      "notebook_note",
+      "notebook_note",
+      "notebook_note",
+      "section_summary",
+      "chunk"
+    ],
+    "selectedContextTypes": [
+      "notebook_note",
+      "notebook_note",
+      "notebook_note",
+      "section_summary"
+    ],
+    "hasNotebookContextCandidate": true
+  },
+  "qualityGates": {
+    "authoritySignal": true,
+    "sectionSummarySignal": true,
+    "notebookContextSignal": true,
+    "structuredChunkCountBetterOrEqual": true,
+    "structuredCitationStable": true,
+    "allPassed": true
+  }
+}

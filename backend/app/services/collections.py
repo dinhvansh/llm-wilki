@@ -6,8 +6,9 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.ingest import slugify
-from app.models import Collection, Page, Source
+from app.models import Collection, CollectionMembership, Page, Source
 from app.services.audit import create_audit_log
+from app.services.permissions import can_access_collection_id
 
 
 def _iso(value):
@@ -27,17 +28,23 @@ def serialize_collection(db: Session, collection: Collection) -> dict:
         "color": collection.color,
         "sourceCount": db.query(Source).filter(Source.collection_id == collection.id).count(),
         "pageCount": db.query(Page).filter(Page.collection_id == collection.id).count(),
+        "memberCount": db.query(CollectionMembership).filter(CollectionMembership.collection_id == collection.id).count(),
         "createdAt": _iso(collection.created_at),
         "updatedAt": _iso(collection.updated_at),
     }
 
 
-def list_collections(db: Session) -> list[dict]:
-    collections = db.query(Collection).order_by(Collection.name.asc()).all()
+def list_collections(db: Session, actor=None) -> list[dict]:
+    query = db.query(Collection)
+    if actor is not None and actor.collection_scope_mode == "restricted" and actor.role != "admin":
+        query = query.filter(Collection.id.in_(list(actor.accessible_collection_ids)))
+    collections = query.order_by(Collection.name.asc()).all()
     return [serialize_collection(db, collection) for collection in collections]
 
 
-def get_collection_by_id(db: Session, collection_id: str) -> dict | None:
+def get_collection_by_id(db: Session, collection_id: str, actor=None) -> dict | None:
+    if actor is not None and not can_access_collection_id(actor, collection_id):
+        return None
     collection = db.query(Collection).filter(Collection.id == collection_id).first()
     return serialize_collection(db, collection) if collection else None
 
@@ -91,6 +98,42 @@ def delete_collection(db: Session, collection_id: str) -> bool:
     db.delete(collection)
     db.commit()
     return True
+
+
+def set_collection_memberships(db: Session, collection_id: str, memberships: list[dict], actor: str = "Current User") -> dict | None:
+    collection = db.query(Collection).filter(Collection.id == collection_id).first()
+    if not collection:
+        return None
+    db.query(CollectionMembership).filter(CollectionMembership.collection_id == collection_id).delete()
+    now = datetime.now(timezone.utc)
+    created = []
+    for membership in memberships:
+        user_id = str(membership.get("userId") or "").strip()
+        role = str(membership.get("role") or "viewer").strip().lower()
+        if not user_id:
+            continue
+        row = CollectionMembership(
+            id=f"cm-{uuid4().hex[:8]}",
+            collection_id=collection_id,
+            user_id=user_id,
+            role=role or "viewer",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        created.append({"userId": user_id, "role": row.role})
+    collection.updated_at = now
+    create_audit_log(
+        db,
+        action="set_collection_memberships",
+        object_type="collection",
+        object_id=collection.id,
+        actor=actor,
+        summary=f"Updated memberships for collection `{collection.name}`",
+        metadata={"memberships": created},
+    )
+    db.commit()
+    return {"collectionId": collection.id, "memberships": created}
 
 
 def assign_source_collection(db: Session, source_id: str, collection_id: str | None, actor: str = "Current User") -> dict | None:

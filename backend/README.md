@@ -20,13 +20,31 @@ Backend chịu trách nhiệm cho:
 
 ## Setup
 
+Recommended local setup from repo root:
+
 ```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_backend.ps1
+```
+
+Manual setup:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 alembic upgrade head
 python -m app.main
+```
+
+OCR note for native Windows:
+
+- local OCR for `pdf scan` and `image_ocr` requires `Tesseract` plus `Docling`
+- the repo prefers `backend\.local\tessdata` for local OCR language files
+- verify with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\test_phase28.py
 ```
 
 ## Worker

@@ -1,4 +1,4 @@
-import type { Claim, Entity, ExtractionRun, Job, KnowledgeUnit, Page, PaginatedResponse, Source, SourceChunk, SourceSuggestion } from '@/lib/types'
+import type { Claim, Entity, ExtractionRun, Job, KnowledgeUnit, Page, PaginatedResponse, Source, SourceArtifact, SourceChunk, SourceSuggestion } from '@/lib/types'
 
 import { apiRequest } from './api-client'
 import type { ISourceService } from './types'
@@ -26,6 +26,9 @@ export function createRealSourceService(): ISourceService {
     },
     async getChunks(sourceId, params) {
       return apiRequest<PaginatedResponse<SourceChunk>>(`/sources/${sourceId}/chunks${buildQuery({ page: params?.page, pageSize: params?.pageSize })}`)
+    },
+    async getArtifacts(sourceId) {
+      return apiRequest<SourceArtifact[]>(`/sources/${sourceId}/artifacts`)
     },
     async getClaims(sourceId) {
       return apiRequest<Claim[]>(`/sources/${sourceId}/claims`)
@@ -83,6 +86,12 @@ export function createRealSourceService(): ISourceService {
     },
     async restore(sourceId) {
       return apiRequest<Source>(`/sources/${sourceId}/restore`, { method: 'POST' })
+    },
+    async updateMetadata(sourceId, payload) {
+      return apiRequest<Source>(`/sources/${sourceId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      })
     },
     async upload(file, collectionId) {
       const body = new FormData()

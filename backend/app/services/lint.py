@@ -41,6 +41,16 @@ def _months_since(value: datetime | None) -> int | None:
     return max(0, (now.year - compared.year) * 12 + now.month - compared.month)
 
 
+def _source_authority_level(source: Source) -> str:
+    metadata = source.metadata_json or {}
+    return str(metadata.get("authorityLevel") or metadata.get("authority_level") or "").strip().lower()
+
+
+def _source_status(source: Source) -> str:
+    metadata = source.metadata_json or {}
+    return str(metadata.get("sourceStatus") or metadata.get("source_status") or "").strip().lower()
+
+
 def _lint_issue(page: Page, rule_id: str, severity: str, title: str, message: str, suggestion: str, metadata: dict | None = None) -> dict:
     issue_metadata = {
         "collectionId": page.collection_id,
@@ -69,6 +79,7 @@ def _quick_fix(action: str, label: str, payload: dict | None = None) -> dict:
 def _run_rules(
     page: Page,
     source_ids: list[str],
+    linked_sources: list[Source],
     backlinks: list[dict],
     page_ids: set[str],
     citation_count: int,
@@ -183,6 +194,52 @@ def _run_rules(
                 {
                     "sourceIds": stale_linked_sources,
                     **_quick_fix("request_rebuild", "Refresh stale sources", {"sourceIds": stale_linked_sources}),
+                },
+            )
+        )
+
+    authoritative_sources = [
+        source
+        for source in linked_sources
+        if _source_authority_level(source) == "official" or _source_status(source) in {"approved", "published"}
+    ]
+    weak_sources = [
+        source
+        for source in linked_sources
+        if _source_authority_level(source) in {"informal", "user_note"} or _source_status(source) in {"draft", "archived"}
+    ]
+    archived_sources = [source for source in linked_sources if _source_status(source) == "archived"]
+
+    if authoritative_sources and weak_sources:
+        issues.append(
+            _lint_issue(
+                page,
+                "authority_mismatch_sources",
+                "high" if page.status in {"published", "in_review"} else "medium",
+                "Page mixes authoritative and weak sources",
+                "This page links both authoritative/approved evidence and weaker draft/informal evidence.",
+                "Review citations and either remove weak evidence, downgrade the page, or document why mixed authority is acceptable.",
+                {
+                    "authoritativeSourceIds": [source.id for source in authoritative_sources],
+                    "weakerSourceIds": [source.id for source in weak_sources],
+                    "authoritativeTitles": [source.title for source in authoritative_sources],
+                    "weakerTitles": [source.title for source in weak_sources],
+                },
+            )
+        )
+
+    if archived_sources and page.status in {"published", "in_review"}:
+        issues.append(
+            _lint_issue(
+                page,
+                "archived_source_link",
+                "high",
+                "Page links archived source evidence",
+                "Archived sources should not remain primary evidence for published or in-review pages.",
+                "Refresh the page with current evidence or explicitly demote/remove archived source links.",
+                {
+                    "sourceIds": [source.id for source in archived_sources],
+                    "sourceTitles": [source.title for source in archived_sources],
                 },
             )
         )
@@ -379,6 +436,7 @@ def run_lint(
         pages = [item for item in pages if (item.collection_id or "standalone") == collection_id]
     page_ids = {item.id for item in pages}
     source_map = _page_source_map(db, [item.id for item in pages])
+    source_lookup = {source.id: source for source in db.query(Source).all()}
     backlinks_map = _page_backlinks_map(db, [item.id for item in pages])
     all_pages = db.query(Page).all()
     duplicate_title_counts: dict[str, list[str]] = {}
@@ -405,7 +463,7 @@ def run_lint(
         page_id
         for (page_id,) in db.query(Page.id).filter(Page.page_type == "issue", Page.content_md.ilike("%conflict%")).all()
     )
-    all_sources = db.query(Source).all()
+    all_sources = list(source_lookup.values())
     stale_source_ids = {
         source.id
         for source in all_sources
@@ -422,6 +480,7 @@ def run_lint(
             _run_rules(
                 item,
                 source_map.get(item.id, []),
+                [source_lookup[source_id] for source_id in source_map.get(item.id, []) if source_id in source_lookup],
                 backlinks_map.get(item.id, []),
                 page_ids,
                 citation_counts.get(item.id, 0),
@@ -512,6 +571,8 @@ def run_lint(
                 {"id": "missing_source_links", "label": "Missing source links"},
                 {"id": "published_source_coverage", "label": "Published source coverage"},
                 {"id": "stale_authoritative_source", "label": "Stale authoritative source"},
+                {"id": "authority_mismatch_sources", "label": "Authority mismatch sources"},
+                {"id": "archived_source_link", "label": "Archived source link"},
                 {"id": "missing_citation_map", "label": "Missing citation map"},
                 {"id": "conflicting_pages", "label": "Conflicting pages"},
                 {"id": "thin_summary", "label": "Thin summary"},

@@ -8,6 +8,12 @@ class UserOut(BaseModel):
     email: str
     name: str
     role: str
+    departmentId: str | None = None
+    departmentName: str | None = None
+    permissions: list[str] = []
+    scopeMode: str = "all"
+    accessibleCollectionIds: list[str] = []
+    collectionMemberships: list[dict] = []
 
 
 class LoginRequest(BaseModel):

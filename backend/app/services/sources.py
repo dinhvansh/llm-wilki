@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import mimetypes
 from pathlib import Path
+import re
 import shutil
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from sqlalchemy import or_
@@ -21,16 +23,19 @@ from app.core.ingest import (
     infer_mime_type,
     infer_source_type,
     prompt_metadata,
+    public_upload_url,
     run_ingest_pipeline,
     serialize_stage_results,
     slugify,
 )
+from app.core.llm_client import llm_client
 from app.core.reliability import PROMPT_VERSION
 from app.core.runtime_config import load_runtime_snapshot
-from app.core.storage import replace_source_bytes, save_source_bytes
-from app.models import Claim, Collection, Entity, ExtractionRun, GlossaryTerm, KnowledgeUnit, Page, PageClaimLink, PageEntityLink, PageSourceLink, Source, SourceChunk, SourceEntityLink, SourceSuggestion, TimelineEvent
+from app.core.storage import read_object_bytes, refresh_object_bytes, save_existing_file_object, save_source_object, StorageError
+from app.models import Claim, Collection, Entity, ExtractionRun, GlossaryTerm, KnowledgeUnit, Page, PageClaimLink, PageEntityLink, PageSourceLink, Source, SourceArtifactRecord, SourceChunk, SourceEntityLink, SourceSuggestion, StorageObject, TimelineEvent
 from app.models import ReviewIssue, ReviewItem
 from app.services.pages import create_page_with_version
+from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
 from app.services.suggestions import create_source_suggestion
 
 
@@ -39,6 +44,10 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_CONNECTOR_BYTES = 2 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 MIN_TEXT_CHARS = 20
+SOURCE_TRUST_LEVELS = {"high", "medium", "low"}
+SOURCE_STATUS_VALUES = {"draft", "approved", "archived", "superseded"}
+AUTHORITY_LEVEL_VALUES = {"official", "reference", "informal"}
+KNOWLEDGE_UNIT_TYPES = {"definition", "rule", "procedure_step", "condition", "exception", "threshold", "warning", "decision", "relationship", "example", "fact"}
 
 
 def _primary_page_type(candidates: list[dict]) -> str:
@@ -59,11 +68,225 @@ def _iso(value):
     return value.isoformat()
 
 
+def _string_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split()).strip()
+    return text or None
+
+
+def _source_metadata_fields(source: Source) -> dict:
+    metadata = source.metadata_json or {}
+    return {
+        "documentType": _string_or_none(metadata.get("documentType") or metadata.get("document_type")),
+        "sourceStatus": _string_or_none(metadata.get("sourceStatus") or metadata.get("source_status")),
+        "authorityLevel": _string_or_none(metadata.get("authorityLevel") or metadata.get("authority_level")),
+        "effectiveDate": _string_or_none(metadata.get("effectiveDate") or metadata.get("effective_date")),
+        "version": _string_or_none(metadata.get("version")),
+        "owner": _string_or_none(metadata.get("owner")),
+    }
+
+
+def _normalize_knowledge_unit_type(claim: Claim, metadata: dict | None = None) -> str:
+    metadata = metadata or {}
+    claim_type = str(claim.claim_type or "").lower()
+    text = f"{claim.text or ''}\n{claim.topic or ''}".lower()
+    section_role = str(metadata.get("sectionRole") or "").lower()
+
+    if claim_type == "definition":
+        return "definition"
+    if claim_type in {"rule", "requirement"}:
+        if re.search(r"\bthreshold\b|\blimit\b|\bsla\b|\btarget\b|\babove\b|\bbelow\b|\bmore than\b|\bless than\b", text):
+            return "threshold"
+        if section_role == "exception":
+            return "exception"
+        return "rule"
+    if claim_type in {"process", "instruction"}:
+        return "procedure_step"
+    if claim_type == "condition":
+        return "condition"
+    if claim_type == "decision":
+        return "decision"
+    if claim_type == "example":
+        return "example"
+    if claim_type == "risk":
+        return "warning"
+    if claim_type == "metric":
+        return "threshold"
+    if claim_type == "fact" and len(claim.entity_ids or []) >= 2:
+        return "relationship"
+    return claim_type if claim_type in KNOWLEDGE_UNIT_TYPES else "fact"
+
+
+def _unique_note_texts(values: list[str], limit: int = 5) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _build_notebook_context(
+    source: Source,
+    summary: str,
+    key_facts: list[str],
+    section_summaries: list[dict],
+    source_sections: list[dict],
+    claim_records: list[tuple[Claim, SourceChunk]],
+    knowledge_unit_records: list[KnowledgeUnit],
+) -> dict:
+    source_metadata = source.metadata_json or {}
+    source_brief = summary.strip() or source.description or source.title
+    key_points = _unique_note_texts(key_facts or [source_brief], limit=6)
+    section_by_key = {
+        str(section.get("sectionKey") or ""): section
+        for section in source_sections
+        if str(section.get("sectionKey") or "").strip()
+    }
+    chunk_lookup = {chunk.id: chunk for _claim, chunk in claim_records}
+    claim_lookup = {claim.id: claim for claim, _chunk in claim_records}
+    grouped: dict[str, dict] = {
+        "procedures": {"title": "Procedures", "role": "step", "items": [], "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+        "rules": {"title": "Rules And Thresholds", "role": "evidence", "items": [], "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+        "risks": {"title": "Risks And Caveats", "role": "exception", "items": [], "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+        "decisions": {"title": "Decisions And Judgement Calls", "role": "detail", "items": [], "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+    }
+
+    def _assign_group(unit_type: str, section_role: str | None) -> str:
+        lowered_type = str(unit_type or "").lower()
+        lowered_role = str(section_role or "").lower()
+        if lowered_type in {"procedure_step", "condition"} or lowered_role in {"step", "prerequisite"}:
+            return "procedures"
+        if lowered_type in {"exception", "warning"} or lowered_role in {"exception", "risk"}:
+            return "risks"
+        if lowered_type in {"decision", "relationship", "example"}:
+            return "decisions"
+        return "rules"
+
+    for unit in knowledge_unit_records:
+        metadata = unit.metadata_json or {}
+        chunk_id = unit.source_chunk_id or metadata.get("sourceChunkId")
+        claim_id = unit.claim_id
+        section_key = metadata.get("parentSectionKey")
+        bucket = grouped[_assign_group(unit.unit_type, metadata.get("sectionRole"))]
+        bucket["items"].append(unit.text)
+        if chunk_id:
+            bucket["chunkIds"].append(str(chunk_id))
+        if claim_id:
+            bucket["claimIds"].append(str(claim_id))
+        bucket["unitIds"].append(unit.id)
+        if section_key:
+            bucket["sectionKeys"].append(str(section_key))
+
+    if not any(bucket["items"] for bucket in grouped.values()):
+        for claim, chunk in claim_records:
+            metadata = claim.metadata_json or {}
+            bucket = grouped[_assign_group(claim.claim_type, metadata.get("sectionRole"))]
+            bucket["items"].append(claim.text)
+            bucket["chunkIds"].append(chunk.id)
+            bucket["claimIds"].append(claim.id)
+            if metadata.get("parentSectionKey"):
+                bucket["sectionKeys"].append(str(metadata["parentSectionKey"]))
+
+    notes: list[dict] = [
+        {
+            "id": "source-brief",
+            "kind": "source_brief",
+            "title": "Source Brief",
+            "text": source_brief,
+            "roles": ["summary"],
+            "provenance": {"sourceId": source.id, "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+        }
+    ]
+    for index, point in enumerate(key_points, start=1):
+        notes.append(
+            {
+                "id": f"key-point-{index}",
+                "kind": "key_point",
+                "title": f"Key Point {index}",
+                "text": point,
+                "roles": ["summary", "evidence"],
+                "provenance": {"sourceId": source.id, "chunkIds": [], "claimIds": [], "unitIds": [], "sectionKeys": []},
+            }
+        )
+
+    for key, payload in grouped.items():
+        items = _unique_note_texts(payload["items"], limit=4)
+        if not items:
+            continue
+        notes.append(
+            {
+                "id": key,
+                "kind": "grouped_note",
+                "title": payload["title"],
+                "text": "\n".join(f"- {item}" for item in items),
+                "roles": [payload["role"]],
+                "provenance": {
+                    "sourceId": source.id,
+                    "chunkIds": _unique_note_texts(payload["chunkIds"], limit=8),
+                    "claimIds": _unique_note_texts(payload["claimIds"], limit=8),
+                    "unitIds": _unique_note_texts(payload["unitIds"], limit=8),
+                    "sectionKeys": _unique_note_texts(payload["sectionKeys"], limit=8),
+                },
+            }
+        )
+
+    recommended_prompts = _unique_note_texts(
+        [
+            f"Summarize {source.title}.",
+            f"What should I read first in {source.title}?",
+            f"What procedures or steps matter most in {source.title}?" if grouped["procedures"]["items"] else "",
+            f"What rules or thresholds matter most in {source.title}?" if grouped["rules"]["items"] else "",
+            f"What risks or caveats appear in {source.title}?" if grouped["risks"]["items"] else "",
+            f"What decisions or judgement calls appear in {source.title}?" if grouped["decisions"]["items"] else "",
+        ],
+        limit=6,
+    )
+
+    return {
+        "sourceBrief": source_brief,
+        "keyPoints": key_points,
+        "notes": notes,
+        "recommendedPrompts": recommended_prompts,
+        "sectionCount": len(section_summaries),
+        "sectionKeys": [str(section.get("sectionKey") or "") for section in section_summaries[:12]],
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "documentType": _string_or_none(source_metadata.get("documentType") or source_metadata.get("document_type")),
+    }
+
+
 def _serialize_source(source: Source) -> dict:
+    metadata_fields = _source_metadata_fields(source)
+    storage_objects = [
+        {
+            "id": item.id,
+            "backend": item.backend,
+            "bucket": item.bucket,
+            "objectKey": item.object_key,
+            "localPath": item.local_path,
+            "originalFilename": item.original_filename,
+            "contentType": item.content_type,
+            "byteSize": item.byte_size,
+            "checksumSha256": item.checksum_sha256,
+            "lifecycleState": item.lifecycle_state,
+            "createdAt": _iso(item.created_at),
+        }
+        for item in sorted(source.storage_objects or [], key=lambda object_: object_.created_at, reverse=True)
+    ]
     return {
         "id": source.id,
         "title": source.title,
         "sourceType": source.source_type,
+        "documentType": metadata_fields["documentType"],
         "mimeType": source.mime_type,
         "filePath": source.file_path,
         "url": source.url,
@@ -72,13 +295,18 @@ def _serialize_source(source: Source) -> dict:
         "createdBy": source.created_by,
         "parseStatus": source.parse_status,
         "ingestStatus": source.ingest_status,
-        "metadataJson": source.metadata_json or {},
+        "metadataJson": {**(source.metadata_json or {}), "storageObjects": storage_objects},
         "checksum": source.checksum,
         "trustLevel": source.trust_level,
         "fileSize": source.file_size,
         "description": source.description,
         "tags": source.tags or [],
         "collectionId": source.collection_id,
+        "sourceStatus": metadata_fields["sourceStatus"],
+        "authorityLevel": metadata_fields["authorityLevel"],
+        "effectiveDate": metadata_fields["effectiveDate"],
+        "version": metadata_fields["version"],
+        "owner": metadata_fields["owner"],
     }
 
 
@@ -88,8 +316,10 @@ def _paginate(items: list[dict], page: int, page_size: int) -> dict:
     return {"data": data, "total": len(items), "page": page, "pageSize": page_size, "hasMore": start + page_size < len(items)}
 
 
-def list_sources(db: Session, page: int = 1, page_size: int = 20, status: str | None = None, source_type: str | None = None, search: str | None = None, collection_id: str | None = None) -> dict:
+def list_sources(db: Session, page: int = 1, page_size: int = 20, status: str | None = None, source_type: str | None = None, search: str | None = None, collection_id: str | None = None, actor=None) -> dict:
     query = db.query(Source)
+    if actor is not None:
+        query = apply_collection_scope_filter(query, Source, actor)
     if status and status != "archived":
         query = query.filter(Source.parse_status == status)
     if source_type:
@@ -110,9 +340,623 @@ def list_sources(db: Session, page: int = 1, page_size: int = 20, status: str | 
     return _paginate([_serialize_source(item) for item in items], page, page_size)
 
 
-def get_source_by_id(db: Session, source_id: str) -> dict | None:
+def get_source_by_id(db: Session, source_id: str, actor=None) -> dict | None:
     source = db.query(Source).filter(Source.id == source_id).first()
+    if source and actor is not None and not can_access_collection_id(actor, source.collection_id):
+        return None
     return _serialize_source(source) if source else None
+
+
+def list_source_storage_objects(db: Session, source_id: str, actor=None) -> list[dict] | None:
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source or (actor is not None and not can_access_collection_id(actor, source.collection_id)):
+        return None
+    rows = (
+        db.query(StorageObject)
+        .filter(StorageObject.source_id == source_id)
+        .order_by(StorageObject.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "backend": row.backend,
+            "bucket": row.bucket,
+            "objectKey": row.object_key,
+            "localPath": row.local_path,
+            "originalFilename": row.original_filename,
+            "contentType": row.content_type,
+            "byteSize": row.byte_size,
+            "checksumSha256": row.checksum_sha256,
+            "lifecycleState": row.lifecycle_state,
+            "owner": row.owner,
+            "sourceId": row.source_id,
+            "artifactId": row.artifact_id,
+            "metadataJson": row.metadata_json or {},
+            "createdAt": _iso(row.created_at),
+            "updatedAt": _iso(row.updated_at),
+        }
+        for row in rows
+    ]
+
+
+def get_storage_object_download(db: Session, object_id: str, actor=None) -> tuple[StorageObject, bytes] | None:
+    row = db.query(StorageObject).filter(StorageObject.id == object_id, StorageObject.lifecycle_state == "active").first()
+    if not row:
+        return None
+    if row.source_id:
+        source = db.query(Source).filter(Source.id == row.source_id).first()
+        if source and actor is not None and not can_access_collection_id(actor, source.collection_id):
+            return None
+    payload = read_object_bytes(row.backend, row.object_key, local_path=row.local_path, bucket=row.bucket)
+    return row, payload
+
+
+def _clean_preview_text(value: object, limit: int = 600) -> str | None:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _resolve_public_upload_path(url: str | None) -> Path | None:
+    if not url:
+        return None
+    normalized = str(url).strip()
+    prefix = "/backend-uploads/"
+    if not normalized.startswith(prefix):
+        return None
+    relative = unquote(normalized[len(prefix) :]).strip("/")
+    if not relative:
+        return None
+    candidate = (ensure_upload_dir() / relative).resolve()
+    root = ensure_upload_dir().resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.exists() else None
+
+
+def _fallback_image_caption(source: Source, *, context_before: str | None, alt_text: str | None, filename: str | None) -> tuple[str, str]:
+    context = _clean_preview_text(context_before, limit=260)
+    alt = _clean_preview_text(alt_text, limit=180)
+    if context and alt:
+        return (f"Image related to `{source.title}`. Context: {context}", alt)
+    if context:
+        return (f"Image related to `{source.title}`. Context: {context}", context)
+    if alt:
+        return (f"Image artifact referenced in `{source.title}`.", alt)
+    filename_text = _clean_preview_text(filename, limit=120)
+    return ("Image artifact extracted from source for multimodal review.", filename_text or source.title)
+
+
+def _caption_image_with_context(source: Source, image_path: Path | None, *, context_before: str | None, alt_text: str | None) -> tuple[str, str | None, str]:
+    fallback_summary, fallback_preview = _fallback_image_caption(
+        source,
+        context_before=context_before,
+        alt_text=alt_text,
+        filename=image_path.name if image_path else None,
+    )
+    if image_path is None or not image_path.exists():
+        return fallback_summary, fallback_preview, "contextual_fallback"
+
+    runtime = load_runtime_snapshot()
+    profile = runtime.profile_for_task("ingest_summary")
+    mime_type = mimetypes.guess_type(image_path.name)[0] or infer_mime_type(image_path.name, None) or "image/png"
+    if not llm_client.is_enabled(profile):
+        return fallback_summary, fallback_preview, "contextual_fallback"
+
+    try:
+        image_bytes = image_path.read_bytes()
+    except OSError:
+        return fallback_summary, fallback_preview, "contextual_fallback"
+
+    system_prompt = (
+        "You inspect document images for an internal knowledge base ingest pipeline. "
+        "Return strict JSON with keys summary and preview_text. "
+        "summary must describe the visual in one sentence tied to the surrounding document context. "
+        "preview_text should be a short label or notable detail, max 18 words."
+    )
+    user_prompt = (
+        f"Source title: {source.title}\n"
+        f"Source type: {source.source_type}\n"
+        f"Nearby document context: {context_before or 'None'}\n"
+        f"Existing alt text: {alt_text or 'None'}\n"
+        "Describe the image in a grounded, concise way for later retrieval."
+    )
+    response = llm_client.complete_with_image(
+        profile,
+        system_prompt,
+        user_prompt,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+    )
+    if not response:
+        return fallback_summary, fallback_preview, "contextual_fallback"
+    try:
+        from app.core.ingest import json_like_to_dict
+
+        payload = json_like_to_dict(response)
+        summary = _clean_preview_text(payload.get("summary"), limit=280) or fallback_summary
+        preview = _clean_preview_text(payload.get("preview_text"), limit=180) or fallback_preview
+        return summary, preview, "vision_model"
+    except Exception:
+        return fallback_summary, fallback_preview, "contextual_fallback"
+
+
+def _persist_source_artifacts(db: Session, source: Source, artifacts: list[dict]) -> None:
+    now = datetime.now(timezone.utc)
+    old_artifact_ids = [row_id for (row_id,) in db.query(SourceArtifactRecord.id).filter(SourceArtifactRecord.source_id == source.id).all()]
+    if old_artifact_ids:
+        db.query(StorageObject).filter(StorageObject.artifact_id.in_(old_artifact_ids)).update(
+            {
+                StorageObject.artifact_id: None,
+                StorageObject.lifecycle_state: "orphaned",
+                StorageObject.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    db.query(SourceArtifactRecord).filter(SourceArtifactRecord.source_id == source.id).delete()
+    for item in artifacts:
+        artifact_id = str(item.get("id") or f"{source.id}-artifact-{uuid4().hex[:8]}")
+        metadata_json = item.get("metadataJson") if isinstance(item.get("metadataJson"), dict) else {}
+        artifact = SourceArtifactRecord(
+            id=artifact_id,
+            source_id=source.id,
+            artifact_type=str(item.get("artifactType") or "unknown"),
+            title=str(item.get("title") or "Untitled artifact"),
+            status=str(item.get("status") or "available"),
+            content_type=_string_or_none(item.get("contentType")),
+            summary=_string_or_none(item.get("summary")),
+            preview_text=_string_or_none(item.get("previewText")),
+            url=_string_or_none(item.get("url")),
+            page_number=int(item["pageNumber"]) if item.get("pageNumber") is not None else None,
+            metadata_json=metadata_json,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(artifact)
+        artifact_path = _resolve_public_upload_path(artifact.url)
+        if not artifact_path:
+            continue
+        try:
+            stored_object = save_existing_file_object(artifact_path, content_type=artifact.content_type)
+        except StorageError:
+            continue
+        storage_id = f"sto-{uuid4().hex[:10]}"
+        artifact.metadata_json = {
+            **metadata_json,
+            "storageObjectId": storage_id,
+            "storage": {
+                "backend": stored_object.backend,
+                "bucket": stored_object.bucket,
+                "objectKey": stored_object.object_key,
+                "localPath": str(stored_object.local_path),
+            },
+        }
+        db.add(
+            StorageObject(
+                id=storage_id,
+                backend=stored_object.backend,
+                bucket=stored_object.bucket,
+                object_key=stored_object.object_key,
+                local_path=str(stored_object.local_path),
+                original_filename=artifact_path.name,
+                content_type=artifact.content_type,
+                byte_size=stored_object.byte_size,
+                checksum_sha256=stored_object.checksum_sha256,
+                lifecycle_state="active",
+                owner=source.created_by,
+                source_id=source.id,
+                artifact_id=artifact_id,
+                metadata_json=stored_object.metadata,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+
+def _build_multimodal_artifact_manifest(source: Source, metadata: dict, source_file: Path | None = None) -> list[dict]:
+    artifacts: list[dict] = []
+    ordered_blocks = metadata.get("orderedBlocks") if isinstance(metadata.get("orderedBlocks"), list) else []
+    section_summaries = metadata.get("sectionSummaries") if isinstance(metadata.get("sectionSummaries"), list) else []
+    source_sections = metadata.get("sourceSections") if isinstance(metadata.get("sourceSections"), list) else []
+    notebook_context = metadata.get("notebookContext") if isinstance(metadata.get("notebookContext"), dict) else None
+    docling_metadata = metadata.get("docling") if isinstance(metadata.get("docling"), dict) else None
+
+    if docling_metadata:
+        artifacts.append(
+            {
+                "id": f"{source.id}-ocr",
+                "sourceId": source.id,
+                "artifactType": "ocr",
+                "title": "OCR And Document Parsing",
+                "status": "available",
+                "contentType": source.mime_type,
+                "summary": f"Parser {docling_metadata.get('inputFormat') or source.source_type} with {int(docling_metadata.get('pageCount') or 0)} pages",
+                "previewText": _clean_preview_text(", ".join(docling_metadata.get("ocrLanguages") or [])),
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": docling_metadata,
+            }
+        )
+
+    if section_summaries or source_sections:
+        artifacts.append(
+            {
+                "id": f"{source.id}-structure",
+                "sourceId": source.id,
+                "artifactType": "structure",
+                "title": "Document Structure Map",
+                "status": "available",
+                "contentType": "application/json",
+                "summary": f"{len(section_summaries)} section summaries and {len(source_sections)} section objects",
+                "previewText": _clean_preview_text(", ".join(str(item.get("title") or "Untitled") for item in section_summaries[:4])),
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": {
+                    "sectionSummaries": section_summaries,
+                    "sourceSections": source_sections,
+                },
+            }
+        )
+
+    if notebook_context:
+        prompts = notebook_context.get("recommendedPrompts") if isinstance(notebook_context.get("recommendedPrompts"), list) else []
+        artifacts.append(
+            {
+                "id": f"{source.id}-notebook",
+                "sourceId": source.id,
+                "artifactType": "notebook",
+                "title": "Notebook Context",
+                "status": "available",
+                "contentType": "application/json",
+                "summary": f"{len(prompts)} suggested prompts prepared from source evidence",
+                "previewText": _clean_preview_text("\n".join(str(prompt) for prompt in prompts[:3])),
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": notebook_context,
+            }
+        )
+
+    previous_paragraph = ""
+    image_index = 0
+    table_index = 0
+    for block in ordered_blocks:
+        block_type = str(block.get("type") or "").lower()
+        if block_type == "paragraph":
+            previous_paragraph = str(block.get("content") or "").strip()
+            continue
+        if block_type == "image" and block.get("url"):
+            image_index += 1
+            image_path = _resolve_public_upload_path(str(block.get("url")))
+            image_summary, image_preview, caption_source = _caption_image_with_context(
+                source,
+                image_path,
+                context_before=previous_paragraph,
+                alt_text=str(block.get("alt") or ""),
+            )
+            artifacts.append(
+                {
+                    "id": f"{source.id}-ordered-image-{image_index}",
+                    "sourceId": source.id,
+                    "artifactType": "image",
+                    "title": str(block.get("alt") or f"Image Artifact {image_index}"),
+                    "status": "available",
+                    "contentType": infer_mime_type(image_path.name, None) if image_path else None,
+                    "summary": image_summary,
+                    "previewText": image_preview,
+                    "url": str(block.get("url")),
+                    "pageNumber": None,
+                    "metadataJson": {
+                        "orderedBlock": block,
+                        "contextBefore": _clean_preview_text(previous_paragraph, limit=400),
+                        "captionSource": caption_source,
+                        "resolvedImagePath": str(image_path) if image_path else None,
+                    },
+                }
+            )
+        if block_type == "table" and block.get("content"):
+            table_index += 1
+            artifacts.append(
+                {
+                    "id": f"{source.id}-ordered-table-{table_index}",
+                    "sourceId": source.id,
+                    "artifactType": "table",
+                    "title": f"Ordered Table {table_index}",
+                    "status": "available",
+                    "contentType": "text/markdown",
+                    "summary": _clean_preview_text(previous_paragraph, limit=220) or "Table preserved from ordered source walkthrough",
+                    "previewText": _clean_preview_text(block.get("content")),
+                    "url": None,
+                    "pageNumber": None,
+                    "metadataJson": {"orderedBlock": block, "contextBefore": _clean_preview_text(previous_paragraph, limit=400)},
+                }
+            )
+
+    if source.source_type == "image_ocr" and source_file and source_file.exists():
+        image_summary, image_preview, caption_source = _caption_image_with_context(
+            source,
+            source_file,
+            context_before=metadata.get("summary") or source.description or source.title,
+            alt_text=source.title,
+        )
+        artifacts.append(
+            {
+                "id": f"{source.id}-original-image",
+                "sourceId": source.id,
+                "artifactType": "image",
+                "title": source.title or "Uploaded image",
+                "status": "available",
+                "contentType": source.mime_type,
+                "summary": image_summary,
+                "previewText": image_preview or source_file.name,
+                "url": public_upload_url(source_file),
+                "pageNumber": 1,
+                "metadataJson": {
+                    "origin": "source_upload",
+                    "filename": source_file.name,
+                    "captionSource": caption_source,
+                    "resolvedImagePath": str(source_file),
+                },
+            }
+        )
+
+    return artifacts
+
+
+def get_source_artifacts(db: Session, source_id: str, actor=None) -> list[dict]:
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source:
+        return []
+    if actor is not None and not can_access_collection_id(actor, source.collection_id):
+        return []
+
+    persisted = (
+        db.query(SourceArtifactRecord)
+        .filter(SourceArtifactRecord.source_id == source.id)
+        .order_by(SourceArtifactRecord.artifact_type.asc(), SourceArtifactRecord.title.asc())
+        .all()
+    )
+    if persisted:
+        return [
+            {
+                "id": row.id,
+                "sourceId": row.source_id,
+                "artifactType": row.artifact_type,
+                "title": row.title,
+                "status": row.status,
+                "contentType": row.content_type,
+                "summary": row.summary,
+                "previewText": row.preview_text,
+                "url": row.url,
+                "pageNumber": row.page_number,
+                "metadataJson": row.metadata_json or {},
+            }
+            for row in persisted
+        ]
+
+    artifacts: list[dict] = []
+    metadata = source.metadata_json or {}
+    source_file = Path(source.file_path) if source.file_path else None
+    seen_image_urls: set[str] = set()
+
+    manifest = metadata.get("multimodalArtifacts") if isinstance(metadata.get("multimodalArtifacts"), list) else []
+    if manifest:
+        for item in manifest:
+            if not isinstance(item, dict):
+                continue
+            normalized = dict(item)
+            artifacts.append(normalized)
+            if normalized.get("artifactType") == "image" and normalized.get("url"):
+                seen_image_urls.add(str(normalized.get("url")))
+
+    docling_metadata = metadata.get("docling") if isinstance(metadata.get("docling"), dict) else None
+    if docling_metadata:
+        page_count = int(docling_metadata.get("pageCount") or 0)
+        languages = ", ".join(docling_metadata.get("ocrLanguages") or [])
+        summary_parts = [f"Parser: {docling_metadata.get('inputFormat') or source.source_type}"]
+        if page_count:
+            summary_parts.append(f"{page_count} pages")
+        if languages:
+            summary_parts.append(f"OCR languages: {languages}")
+        artifacts.append(
+            {
+                "id": f"{source.id}-ocr",
+                "sourceId": source.id,
+                "artifactType": "ocr",
+                "title": "OCR And Document Parsing",
+                "status": "available",
+                "contentType": source.mime_type,
+                "summary": " | ".join(summary_parts),
+                "previewText": None,
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": docling_metadata,
+            }
+        )
+
+    section_summaries = metadata.get("sectionSummaries") if isinstance(metadata.get("sectionSummaries"), list) else []
+    source_sections = metadata.get("sourceSections") if isinstance(metadata.get("sourceSections"), list) else []
+    if section_summaries or source_sections:
+        top_titles = ", ".join(str(item.get("title") or "Untitled") for item in section_summaries[:4])
+        artifacts.append(
+            {
+                "id": f"{source.id}-structure",
+                "sourceId": source.id,
+                "artifactType": "structure",
+                "title": "Document Structure Map",
+                "status": "available",
+                "contentType": "application/json",
+                "summary": f"{len(section_summaries)} section summaries, {len(source_sections)} source sections",
+                "previewText": top_titles or None,
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": {
+                    "sectionSummaries": section_summaries,
+                    "sourceSections": source_sections,
+                },
+            }
+        )
+
+    notebook_context = metadata.get("notebookContext") if isinstance(metadata.get("notebookContext"), dict) else None
+    if notebook_context:
+        prompts = notebook_context.get("recommendedPrompts") if isinstance(notebook_context.get("recommendedPrompts"), list) else []
+        artifacts.append(
+            {
+                "id": f"{source.id}-notebook",
+                "sourceId": source.id,
+                "artifactType": "notebook",
+                "title": "Notebook Context",
+                "status": "available",
+                "contentType": "application/json",
+                "summary": f"{len(prompts)} suggested prompts for guided exploration",
+                "previewText": "\n".join(str(prompt) for prompt in prompts[:3]) if prompts else None,
+                "url": None,
+                "pageNumber": None,
+                "metadataJson": notebook_context,
+            }
+        )
+
+    ordered_blocks = metadata.get("orderedBlocks") if isinstance(metadata.get("orderedBlocks"), list) else []
+    if ordered_blocks:
+        image_index = 0
+        table_index = 0
+        for block in ordered_blocks:
+            block_type = str(block.get("type") or "").lower()
+            if block_type == "image" and block.get("url"):
+                image_index += 1
+                image_url = str(block.get("url"))
+                seen_image_urls.add(image_url)
+                artifacts.append(
+                    {
+                        "id": f"{source.id}-ordered-image-{image_index}",
+                        "sourceId": source.id,
+                        "artifactType": "image",
+                        "title": str(block.get("alt") or f"Image Artifact {image_index}"),
+                        "status": "available",
+                        "contentType": None,
+                        "summary": "Image referenced from ordered source walkthrough",
+                        "previewText": str(block.get("alt") or ""),
+                        "url": image_url,
+                        "pageNumber": None,
+                        "metadataJson": {"orderedBlock": block},
+                    }
+                )
+            if block_type == "table" and block.get("content"):
+                table_index += 1
+                artifacts.append(
+                    {
+                        "id": f"{source.id}-ordered-table-{table_index}",
+                        "sourceId": source.id,
+                        "artifactType": "table",
+                        "title": f"Ordered Table {table_index}",
+                        "status": "available",
+                        "contentType": "text/markdown",
+                        "summary": "Table preserved from ordered source walkthrough",
+                        "previewText": str(block.get("content"))[:600],
+                        "url": None,
+                        "pageNumber": None,
+                        "metadataJson": {"orderedBlock": block},
+                    }
+                )
+
+    if source_file:
+        if source.source_type == "image_ocr" and source_file.exists():
+            original_image_url = public_upload_url(source_file)
+            if original_image_url not in seen_image_urls:
+                seen_image_urls.add(original_image_url)
+                artifacts.append(
+                    {
+                        "id": f"{source.id}-original-image",
+                        "sourceId": source.id,
+                        "artifactType": "image",
+                        "title": source.title or "Uploaded image",
+                        "status": "available",
+                        "contentType": source.mime_type,
+                        "summary": "Original uploaded image preserved for OCR and multimodal review",
+                        "previewText": source_file.name,
+                        "url": original_image_url,
+                        "pageNumber": 1,
+                        "metadataJson": {"origin": "source_upload", "filename": source_file.name},
+                    }
+                )
+        assets_dir = ensure_upload_dir() / f"{source_file.stem}-assets"
+        if assets_dir.exists():
+            image_files = sorted(
+                [
+                    path
+                    for path in assets_dir.iterdir()
+                    if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+                ]
+            )
+            for index, path in enumerate(image_files, start=1):
+                asset_url = public_upload_url(path)
+                if asset_url in seen_image_urls:
+                    continue
+                artifacts.append(
+                    {
+                        "id": f"{source.id}-image-{index}",
+                        "sourceId": source.id,
+                        "artifactType": "image",
+                        "title": f"Image Artifact {index}",
+                        "status": "available",
+                        "contentType": infer_mime_type(path.name, None),
+                        "summary": f"Extracted image asset from `{source.title}`",
+                        "previewText": path.name,
+                        "url": asset_url,
+                        "pageNumber": None,
+                        "metadataJson": {"filename": path.name},
+                    }
+                )
+
+    table_like_chunks = (
+        db.query(SourceChunk)
+        .filter(SourceChunk.source_id == source.id)
+        .order_by(SourceChunk.chunk_index.asc())
+        .all()
+    )
+    table_count = 0
+    for chunk in table_like_chunks:
+        chunk_metadata = chunk.metadata_json or {}
+        block_types = [str(item).lower() for item in (chunk_metadata.get("blockTypes") or []) if str(item).strip()]
+        looks_like_table = "table" in block_types or str(chunk.content or "").count("|") >= 4
+        if not looks_like_table:
+            continue
+        table_count += 1
+        artifacts.append(
+            {
+                "id": f"{source.id}-table-{table_count}",
+                "sourceId": source.id,
+                "artifactType": "table",
+                "title": chunk.section_title or f"Table Artifact {table_count}",
+                "status": "available",
+                "contentType": "text/markdown",
+                "summary": f"Structured table candidate from chunk {chunk.chunk_index + 1}",
+                "previewText": chunk.content[:600],
+                "url": None,
+                "pageNumber": chunk.page_number,
+                "metadataJson": {
+                    "chunkId": chunk.id,
+                    "chunkIndex": chunk.chunk_index,
+                    "blockTypes": block_types,
+                },
+            }
+        )
+
+    deduped: list[dict] = []
+    seen_ids: set[str] = set()
+    for item in artifacts:
+        item_id = str(item.get("id") or "")
+        if item_id and item_id in seen_ids:
+            continue
+        if item_id:
+            seen_ids.add(item_id)
+        deduped.append(item)
+
+    deduped.sort(key=lambda item: (item["artifactType"], item["title"]))
+    return deduped
 
 
 def archive_source(db: Session, source_id: str, actor: str = "Current User") -> dict | None:
@@ -170,6 +1014,90 @@ def restore_source(db: Session, source_id: str, actor: str = "Current User") -> 
         actor=actor,
         summary=f"Restored source `{source.title}`",
         metadata={},
+    )
+    db.commit()
+    db.refresh(source)
+    return _serialize_source(source)
+
+
+def update_source_metadata(
+    db: Session,
+    source_id: str,
+    *,
+    actor: str = "Current User",
+    description: str | None = None,
+    tags: list[str] | None = None,
+    trust_level: str | None = None,
+    document_type: str | None = None,
+    source_status: str | None = None,
+    authority_level: str | None = None,
+    effective_date: str | None = None,
+    version: str | None = None,
+    owner: str | None = None,
+) -> dict | None:
+    from app.services.audit import create_audit_log
+
+    source = db.query(Source).filter(Source.id == source_id).first()
+    if not source:
+        return None
+
+    metadata = dict(source.metadata_json or {})
+    changes: dict[str, object] = {}
+
+    if description is not None:
+        source.description = _string_or_none(description)
+        changes["description"] = source.description
+    if tags is not None:
+        cleaned_tags: list[str] = []
+        seen: set[str] = set()
+        for tag in tags:
+            cleaned = _string_or_none(tag)
+            if not cleaned:
+                continue
+            normalized = cleaned.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            cleaned_tags.append(cleaned)
+        source.tags = cleaned_tags
+        changes["tags"] = cleaned_tags
+    if trust_level is not None:
+        normalized_trust = (_string_or_none(trust_level) or "").lower()
+        if normalized_trust not in SOURCE_TRUST_LEVELS:
+            raise ValueError("trustLevel must be one of: high, medium, low")
+        source.trust_level = normalized_trust
+        changes["trustLevel"] = normalized_trust
+
+    metadata_updates = {
+        "documentType": _string_or_none(document_type) if document_type is not None else None,
+        "sourceStatus": _string_or_none(source_status) if source_status is not None else None,
+        "authorityLevel": _string_or_none(authority_level) if authority_level is not None else None,
+        "effectiveDate": _string_or_none(effective_date) if effective_date is not None else None,
+        "version": _string_or_none(version) if version is not None else None,
+        "owner": _string_or_none(owner) if owner is not None else None,
+    }
+    if metadata_updates["sourceStatus"] is not None and metadata_updates["sourceStatus"].lower() not in SOURCE_STATUS_VALUES:
+        raise ValueError("sourceStatus must be one of: draft, approved, archived, superseded")
+    if metadata_updates["authorityLevel"] is not None and metadata_updates["authorityLevel"].lower() not in AUTHORITY_LEVEL_VALUES:
+        raise ValueError("authorityLevel must be one of: official, reference, informal")
+
+    for key, value in metadata_updates.items():
+        if value is None:
+            continue
+        normalized_value = value.lower() if key in {"sourceStatus", "authorityLevel"} else value
+        metadata[key] = normalized_value
+        changes[key] = normalized_value
+
+    source.metadata_json = metadata
+    source.updated_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="update_source_metadata",
+        object_type="source",
+        object_id=source.id,
+        actor=actor,
+        summary=f"Updated metadata for source `{source.title}`",
+        metadata={"changes": changes},
     )
     db.commit()
     db.refresh(source)
@@ -439,17 +1367,27 @@ def create_source_record(
     timestamp = datetime.now(timezone.utc)
     resolved_source_type = source_type or infer_source_type(filename)
     resolved_mime_type = infer_mime_type(filename, mime_type)
-    stored_path = save_source_bytes(filename, file_bytes)
-    checksum = hashlib.sha256(file_bytes).hexdigest()
+    source_id = f"src-{uuid4().hex[:8]}"
+    stored_object = save_source_object(filename, file_bytes, content_type=resolved_mime_type)
+    stored_path = stored_object.local_path
+    checksum = stored_object.checksum_sha256
     duplicate_source = db.query(Source).filter(Source.checksum == checksum).order_by(Source.uploaded_at.asc()).first()
     enriched_metadata = {
         **(metadata or {}),
-        "storage": {"backend": "local", "path": str(stored_path)},
+        "storage": {
+            "backend": stored_object.backend,
+            "bucket": stored_object.bucket,
+            "objectKey": stored_object.object_key,
+            "localPath": str(stored_path),
+        },
         "dedupe": {"checksum": checksum, "duplicateOfSourceId": duplicate_source.id if duplicate_source else None},
+        "sourceStatus": _string_or_none((metadata or {}).get("sourceStatus")) or "draft",
+        "authorityLevel": _string_or_none((metadata or {}).get("authorityLevel")) or "reference",
+        "owner": _string_or_none((metadata or {}).get("owner")) or actor,
     }
 
     source = Source(
-        id=f"src-{uuid4().hex[:8]}",
+        id=source_id,
         title=title or filename,
         source_type=resolved_source_type,
         mime_type=resolved_mime_type,
@@ -469,6 +1407,25 @@ def create_source_record(
         collection_id=collection_id,
     )
     db.add(source)
+    db.add(
+        StorageObject(
+            id=f"sto-{uuid4().hex[:10]}",
+            backend=stored_object.backend,
+            bucket=stored_object.bucket,
+            object_key=stored_object.object_key,
+            local_path=str(stored_path),
+            original_filename=filename,
+            content_type=resolved_mime_type,
+            byte_size=stored_object.byte_size,
+            checksum_sha256=stored_object.checksum_sha256,
+            lifecycle_state="active",
+            owner=actor,
+            source_id=source_id,
+            metadata_json=stored_object.metadata,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+    )
     db.commit()
     db.refresh(source)
     return source, stored_path
@@ -621,7 +1578,18 @@ def refresh_url_source_record(db: Session, source_id: str, actor: str = "Current
     if not source or not source.url or not source.file_path:
         return None
     extracted_title, file_bytes, content_type, metadata = fetch_url_content(source.url)
-    replace_source_bytes(source.file_path, file_bytes)
+    storage_object = (
+        db.query(StorageObject)
+        .filter(StorageObject.source_id == source.id, StorageObject.lifecycle_state == "active")
+        .order_by(StorageObject.created_at.desc())
+        .first()
+    )
+    refresh_object_bytes(
+        storage_object.object_key if storage_object else source.file_path,
+        storage_object.local_path if storage_object else source.file_path,
+        file_bytes,
+        content_type="text/plain",
+    )
     source.title = source.title or extracted_title or source.url
     source.mime_type = "text/plain"
     source.file_size = len(file_bytes)
@@ -636,6 +1604,11 @@ def refresh_url_source_record(db: Session, source_id: str, actor: str = "Current
         "refreshedAt": source.updated_at.isoformat(),
         "sourceContentType": content_type,
     }
+    if storage_object:
+        storage_object.byte_size = len(file_bytes)
+        storage_object.checksum_sha256 = source.checksum
+        storage_object.content_type = "text/plain"
+        storage_object.updated_at = source.updated_at
     db.commit()
     db.refresh(source)
     return source
@@ -676,7 +1649,7 @@ def _reset_source_ingest_state(db: Session, source: Source) -> None:
     preserved_metadata = {
         key: value
         for key, value in (source.metadata_json or {}).items()
-        if key in {"inputConnector", "sourceKind", "originalTitle", "fetchedUrl", "contentType", "sourceContentType", "validation", "rawBytes", "readableCharCount", "charCountOriginal"}
+        if key in {"inputConnector", "sourceKind", "originalTitle", "fetchedUrl", "contentType", "sourceContentType", "validation", "rawBytes", "readableCharCount", "charCountOriginal", "sourceStatus", "authorityLevel", "effectiveDate", "version", "owner"}
     }
     source.metadata_json = preserved_metadata
     source.description = "Uploaded source is being processed."
@@ -711,6 +1684,8 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
         timeline_events = artifacts.timeline_events
         glossary_terms = artifacts.glossary_terms
         page_type_candidates = artifacts.page_type_candidates
+        section_summaries = list(parsed.metadata.get("sectionSummaries", []))
+        source_sections = list(parsed.metadata.get("sourceSections", []))
         runtime = load_runtime_snapshot(db)
         embedding_profile = runtime.profile_for_task("embeddings")
         ingest_profile = runtime.profile_for_task("ingest_summary")
@@ -723,10 +1698,14 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             **parsed.metadata,
             "charCount": len(parsed.text),
             "chunkCount": len(chunks),
+            "keywords": list(parsed.metadata.get("keywords", tags)),
+            "language": parsed.metadata.get("language"),
             "pipelineStages": serialize_stage_results(artifacts.stage_results),
             "pageTypeCandidates": page_type_candidates,
             "timelineEvents": timeline_events,
             "glossaryTerms": glossary_terms,
+            "sectionSummaries": section_summaries,
+            "sourceSections": source_sections,
             "generation": prompt_metadata("ingest_summary", ingest_profile.provider, ingest_profile.model),
         }
         source.description = summary
@@ -780,6 +1759,20 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
         for index, chunk in enumerate(chunks):
             embedding_vector = chunk_embeddings[index] if chunk_embeddings and index < len(chunk_embeddings) else []
             chunk_metadata = dict(chunk.get("metadata") or {})
+            heading_path = [str(part) for part in (chunk_metadata.get("headingPath") or []) if str(part).strip()]
+            section_key_hint = " > ".join(heading_path) or str(chunk.get("section_title") or "Document")
+            parent_section = next(
+                (
+                    section
+                    for section in section_summaries
+                    if (
+                        (heading_path and list(section.get("headingPath") or []) == heading_path)
+                        or str(section.get("title") or "") == str(chunk.get("section_title") or "")
+                        or str(section.get("sectionKey") or "").endswith(slugify(section_key_hint))
+                    )
+                ),
+                None,
+            )
             record = SourceChunk(
                 id=f"chunk-{uuid4().hex[:8]}",
                 source_id=source.id,
@@ -791,6 +1784,11 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
                 embedding_id=f"emb-{uuid4().hex[:8]}" if embedding_vector else None,
                 metadata_json={
                     **chunk_metadata,
+                    "keywords": tags[:6],
+                    "language": parsed.metadata.get("language"),
+                    "parentSectionKey": parent_section.get("sectionKey") if parent_section else None,
+                    "parentSectionSummary": parent_section.get("summary") if parent_section else None,
+                    "parentSectionTitle": parent_section.get("title") if parent_section else None,
                     "embedding": embedding_vector,
                     "embeddingModel": embedding_profile.model if embedding_vector else None,
                     "embeddingProvider": embedding_profile.provider if embedding_vector else None,
@@ -809,6 +1807,17 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             chunk_record = chunk_records[min(chunk_index, max(len(chunk_records) - 1, 0))] if chunk_records else None
             if chunk_record is None:
                 continue
+            claim_metadata = dict(claim_payload.get("metadata_json") or {})
+            claim_metadata.setdefault("documentType", parsed.metadata.get("documentType"))
+            claim_metadata.setdefault("language", parsed.metadata.get("language"))
+            claim_metadata.setdefault("keywords", tags[:6])
+            claim_metadata.setdefault("sourceStatus", source.metadata_json.get("sourceStatus"))
+            claim_metadata.setdefault("authorityLevel", source.metadata_json.get("authorityLevel"))
+            claim_metadata.setdefault("sourceOwner", source.metadata_json.get("owner"))
+            claim_metadata.setdefault("sectionRole", (chunk_record.metadata_json or {}).get("sectionRole"))
+            claim_metadata.setdefault("parentSectionKey", (chunk_record.metadata_json or {}).get("parentSectionKey"))
+            claim_metadata.setdefault("parentSectionTitle", (chunk_record.metadata_json or {}).get("parentSectionTitle"))
+            claim_metadata.setdefault("parentSectionSummary", (chunk_record.metadata_json or {}).get("parentSectionSummary"))
             claim = Claim(
                 id=claim_payload["id"],
                 source_chunk_id=chunk_record.id,
@@ -823,7 +1832,7 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
                 extraction_method=claim_payload.get("extraction_method") or "heuristic",
                 evidence_span_start=claim_payload.get("evidence_span_start"),
                 evidence_span_end=claim_payload.get("evidence_span_end"),
-                metadata_json=claim_payload.get("metadata_json") or {},
+                metadata_json=claim_metadata,
             )
             db.add(claim)
             claim_records.append((claim, chunk_record))
@@ -834,13 +1843,18 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             metadata_json.setdefault("sourceChunkIndex", chunk_record.chunk_index)
             metadata_json.setdefault("sourceChunkSectionTitle", chunk_record.section_title)
             metadata_json.setdefault("origin", "claim_extraction")
+            metadata_json.setdefault("documentType", parsed.metadata.get("documentType"))
+            metadata_json.setdefault("language", parsed.metadata.get("language"))
+            metadata_json.setdefault("keywords", tags[:6])
+            normalized_unit_type = _normalize_knowledge_unit_type(claim, metadata_json)
+            metadata_json.setdefault("originalClaimType", claim.claim_type)
             unit = KnowledgeUnit(
                 id=f"ku-{uuid4().hex[:8]}",
                 source_id=source.id,
                 source_chunk_id=chunk_record.id,
                 claim_id=claim.id,
-                unit_type=claim.claim_type,
-                title=(claim.topic or claim.claim_type.replace("_", " ").title())[:255],
+                unit_type=normalized_unit_type,
+                title=(claim.topic or normalized_unit_type.replace("_", " ").title())[:255],
                 text=claim.text,
                 status="candidate" if metadata_json.get("isLowConfidence") else "draft",
                 review_status=claim.review_status,
@@ -922,6 +1936,30 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             started_at=timestamp,
             finished_at=datetime.now(timezone.utc),
         )
+
+        notebook_context = _build_notebook_context(
+            source,
+            summary,
+            key_facts,
+            section_summaries,
+            source_sections,
+            claim_records,
+            knowledge_unit_records,
+        )
+        source.metadata_json = {
+            **(source.metadata_json or {}),
+            "notebookContext": notebook_context,
+        }
+        multimodal_artifacts = _build_multimodal_artifact_manifest(
+            source,
+            source.metadata_json or {},
+            stored_path,
+        )
+        source.metadata_json = {
+            **(source.metadata_json or {}),
+            "multimodalArtifacts": multimodal_artifacts,
+        }
+        _persist_source_artifacts(db, source, multimodal_artifacts)
 
         source.parse_status = "indexed"
         source.ingest_status = "indexed"

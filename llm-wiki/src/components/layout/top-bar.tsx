@@ -1,76 +1,81 @@
 'use client'
-import { Search, Bell, LogOut, User } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { Bell, BookOpen, LogOut, Search, User } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useAuth } from '@/providers/auth-provider'
 
-export function TopBar() {
-  const [searchValue, setSearchValue] = useState('')
-  const [email, setEmail] = useState('admin@local.test')
-  const [password, setPassword] = useState('admin123')
-  const [error, setError] = useState('')
-  const { user, isLoading, login, logout } = useAuth()
+function ScopePill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+      {label}: <span className="font-semibold text-foreground">{value}</span>
+    </div>
+  )
+}
 
-  const onLogin = async (event: FormEvent) => {
-    event.preventDefault()
-    setError('')
-    try {
-      await login(email, password)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
-    }
+export function TopBar() {
+  const pathname = usePathname()
+  const [searchValue, setSearchValue] = useState('')
+  const { user, logout } = useAuth()
+  const hideTopBar = pathname.startsWith('/admin/users')
+
+  const scopeLabel = useMemo(() => {
+    if (!user) return 'guest'
+    if (user.scopeMode !== 'restricted') return 'all knowledge'
+    return `${user.accessibleCollectionIds.length} collections`
+  }, [user])
+
+  if (hideTopBar) {
+    return null
   }
 
   return (
-    <header className="h-14 border-b border-border bg-card flex items-center px-5 gap-4">
-      <div className="flex-1 max-w-md">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search pages, sources, entities..."
-            value={searchValue}
-            onChange={e => setSearchValue(e.target.value)}
-            className="w-full h-8 pl-8 pr-3 text-sm bg-background border border-input rounded-md placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-          />
+    <header className="surface-panel border-b border-border/80 px-5 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-[18rem] flex-1">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search pages, sources, entities, claims..."
+              value={searchValue}
+              onChange={e => setSearchValue(e.target.value)}
+              className="h-10 w-full rounded-full border border-input bg-background/80 pl-10 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
+            />
+          </div>
         </div>
-      </div>
-      <div className="flex items-center gap-3 ml-auto">
-        <button className="relative p-1.5 rounded-md text-muted-foreground hover:bg-accent">
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-destructive rounded-full" />
-        </button>
-        {user ? <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center">
-            <User className="w-3.5 h-3.5 text-secondary-foreground" />
-          </div>
-          <div className="hidden md:block leading-tight">
-            <div className="text-sm text-foreground">{user.name}</div>
-            <div className="text-[11px] uppercase text-muted-foreground">{user.role}</div>
-          </div>
-          <button onClick={() => logout()} className="p-1.5 rounded-md text-muted-foreground hover:bg-accent" title="Log out">
-            <LogOut className="w-4 h-4" />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <ScopePill label="Scope" value={scopeLabel} />
+          {user && <ScopePill label="Role" value={user.role} />}
+          <Link
+            href="/collections"
+            className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+          >
+            <BookOpen className="h-4 w-4" />
+            Collections
+          </Link>
+          <button className="relative rounded-full border border-border/80 bg-background/70 p-2 text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground">
+            <Bell className="h-4 w-4" />
+            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
           </button>
-        </div> : (
-          <form onSubmit={onLogin} className="flex items-center gap-2">
-            <input
-              value={email}
-              onChange={event => setEmail(event.target.value)}
-              className="h-8 w-36 rounded-md border border-input bg-background px-2 text-xs"
-              aria-label="Email"
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={event => setPassword(event.target.value)}
-              className="h-8 w-28 rounded-md border border-input bg-background px-2 text-xs"
-              aria-label="Password"
-            />
-            <button disabled={isLoading} className="h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-60">
-              Login
-            </button>
-            {error && <span className="max-w-56 truncate text-xs text-destructive">{error}</span>}
-          </form>
-        )}
+        </div>
+
+        <div className="ml-auto flex items-center gap-3 rounded-full border border-border/80 bg-background/80 px-3 py-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/12 text-primary">
+            <User className="h-4 w-4" />
+          </div>
+          <div className="hidden leading-tight md:block">
+            <div className="text-sm font-medium text-foreground">{user?.name}</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              {user?.scopeMode === 'restricted' ? 'Scoped access' : 'Workspace-wide access'}
+            </div>
+          </div>
+          <button onClick={() => logout()} className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Log out">
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </header>
   )

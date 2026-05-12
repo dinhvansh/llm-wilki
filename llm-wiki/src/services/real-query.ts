@@ -5,10 +5,16 @@ import type { IQueryService } from './types'
 
 export function createRealQueryService(): IQueryService {
   return {
-    async ask(question, sessionId) {
+    async ask(question, sessionId, scope) {
       return apiRequest<AskResponse>('/ask', {
         method: 'POST',
-        body: JSON.stringify({ question, sessionId }),
+        body: JSON.stringify({
+          question,
+          sessionId,
+          sourceId: scope?.sourceId ?? null,
+          collectionId: scope?.collectionId ?? null,
+          pageId: scope?.pageId ?? null,
+        }),
       })
     },
     async listChatSessions(limit = 30) {

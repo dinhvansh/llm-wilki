@@ -30,7 +30,10 @@ export function useDeleteChatSession() {
   })
 }
 
-export function useAskConversation(sessionId?: string | null) {
+export function useAskConversation(
+  sessionId?: string | null,
+  scope?: { sourceId?: string | null; collectionId?: string | null; pageId?: string | null },
+) {
   const qc = useQueryClient()
   const [history, setHistory] = useState<AskResponse[]>([])
   const [currentAnswer, setCurrentAnswer] = useState<AskResponse | null>(null)
@@ -41,7 +44,7 @@ export function useAskConversation(sessionId?: string | null) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await queryService.ask(question, sessionId)
+      const response = await queryService.ask(question, sessionId, scope)
       setCurrentAnswer(response)
       setHistory(prev => [...prev, response])
       qc.invalidateQueries({ queryKey: ['ask-sessions'] })

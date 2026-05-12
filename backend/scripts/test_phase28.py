@@ -10,18 +10,25 @@ if str(ROOT) not in sys.path:
 
 from app.config import settings
 from app.core.connectors import get_connector_capability
+from app.core.docling_parser import resolve_tessdata_path, resolve_tesseract_command
 from app.core.ingest import parse_document
 
 
 def main() -> None:
+    tesseract_cmd = resolve_tesseract_command()
+    tessdata_path = resolve_tessdata_path(tesseract_cmd)
+    command = [tesseract_cmd]
+    if tessdata_path:
+        command.extend(["--tessdata-dir", tessdata_path])
+    command.append("--list-langs")
     try:
-        langs_output = subprocess.check_output(["tesseract", "--list-langs"], text=True, stderr=subprocess.STDOUT)
-    except FileNotFoundError:
+        langs_output = subprocess.check_output(command, text=True, stderr=subprocess.STDOUT)
+    except (FileNotFoundError, subprocess.CalledProcessError):
         print(
             {
                 "success": True,
                 "skipped": True,
-                "reason": "tesseract binary is not installed or not on PATH in this local environment",
+                "reason": "tesseract runtime is not available in this local environment",
             }
         )
         return
@@ -52,6 +59,8 @@ def main() -> None:
             "doclingParser": True,
             "ocrEngine": settings.DOCLING_OCR_ENGINE,
             "ocrLangs": settings.DOCLING_OCR_LANGS,
+            "tesseractCommand": tesseract_cmd,
+            "tessdataPath": tessdata_path,
             "imageConnector": capability.label,
         }
     )

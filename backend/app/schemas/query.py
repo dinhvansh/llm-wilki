@@ -40,6 +40,22 @@ class AskInterpretedQueryOut(BaseModel):
     needsClarification: bool = False
     clarificationQuestion: str | None = None
     conversationSummary: str | None = None
+    planner: dict | None = None
+
+
+class AskScopeOut(BaseModel):
+    type: str
+    id: str
+    title: str
+    description: str | None = None
+    strict: bool = True
+    matchedInScope: bool = True
+
+
+class SuggestedPromptOut(BaseModel):
+    text: str
+    category: str
+    reason: str | None = None
 
 
 class AskDiagnosticsOut(BaseModel):
@@ -47,15 +63,18 @@ class AskDiagnosticsOut(BaseModel):
     retrievalLimit: int
     searchResultLimit: int
     clarificationTriggered: bool = False
+    planning: dict | None = None
     topChunks: list[RetrievalDiagnosticsOut] = []
     topCandidates: list[RetrievalDiagnosticsOut] = []
     selectedContext: list[dict] = []
     contextCoverage: dict = {}
+    answerVerification: dict | None = None
 
 
 class AskRequest(BaseModel):
     question: str
     sessionId: str | None = None
+    sourceId: str | None = None
     collectionId: str | None = None
     pageId: str | None = None
 
@@ -65,7 +84,13 @@ class CitationOut(BaseModel):
     index: int
     sourceId: str
     sourceTitle: str
+    candidateType: str | None = None
+    artifactId: str | None = None
+    artifactType: str | None = None
     chunkId: str | None = None
+    unitId: str | None = None
+    sectionKey: str | None = None
+    sectionTitle: str | None = None
     snippet: str
     matchedText: str | None = None
     chunkSpanStart: int | None = None
@@ -76,6 +101,8 @@ class CitationOut(BaseModel):
     pageTitle: str | None = None
     url: str | None = None
     confidence: float
+    evidenceGrade: dict | None = None
+    citationReason: str | None = None
 
 
 class RelatedPageOut(BaseModel):
@@ -102,6 +129,8 @@ class AskResponseOut(BaseModel):
     answer: str
     answerType: str | None = None
     interpretedQuery: AskInterpretedQueryOut | None = None
+    scope: AskScopeOut | None = None
+    suggestedPrompts: list[SuggestedPromptOut] = []
     citations: list[CitationOut]
     relatedPages: list[RelatedPageOut]
     relatedSources: list[RelatedSourceOut]

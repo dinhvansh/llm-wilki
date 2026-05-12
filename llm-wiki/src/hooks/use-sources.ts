@@ -25,6 +25,14 @@ export function useSourceChunks(sourceId: string, params?: Parameters<typeof sou
   })
 }
 
+export function useSourceArtifacts(sourceId: string) {
+  return useQuery({
+    queryKey: ['source-artifacts', sourceId],
+    queryFn: () => sourceService.getArtifacts(sourceId),
+    enabled: !!sourceId,
+  })
+}
+
 export function useSourceClaims(sourceId: string) {
   return useQuery({
     queryKey: ['source-claims', sourceId],
@@ -93,6 +101,21 @@ export function useRetrySourceJob(sourceId: string) {
   })
 }
 
+export function useRebuildSource(sourceId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => sourceService.rebuild(sourceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['source-jobs', sourceId] })
+      qc.invalidateQueries({ queryKey: ['source', sourceId] })
+      qc.invalidateQueries({ queryKey: ['source-chunks', sourceId] })
+      qc.invalidateQueries({ queryKey: ['source-claims', sourceId] })
+      qc.invalidateQueries({ queryKey: ['source-knowledge-units', sourceId] })
+      qc.invalidateQueries({ queryKey: ['source-extraction-runs', sourceId] })
+    },
+  })
+}
+
 export function useCancelSourceJob(sourceId: string) {
   const qc = useQueryClient()
   return useMutation({
@@ -116,6 +139,27 @@ export function useRestoreSource(sourceId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => sourceService.restore(sourceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['source', sourceId] })
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
+export function useUpdateSourceMetadata(sourceId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: {
+      description?: string | null
+      tags?: string[]
+      trustLevel?: string | null
+      documentType?: string | null
+      sourceStatus?: string | null
+      authorityLevel?: string | null
+      effectiveDate?: string | null
+      version?: string | null
+      owner?: string | null
+    }) => sourceService.updateMetadata(sourceId, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['source', sourceId] })
       qc.invalidateQueries({ queryKey: ['sources'] })

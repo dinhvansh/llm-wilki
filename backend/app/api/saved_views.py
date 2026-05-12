@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.identity import require_roles
+from app.core.identity import require_permission
 from app.db.database import get_db
 from app.models import SavedView
 from app.services.auth import Actor
@@ -32,7 +32,7 @@ def _serialize(view: SavedView) -> dict:
 
 
 @router.get("")
-async def list_saved_views(viewType: str | None = None, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reader", "editor", "reviewer", "admin"))):
+async def list_saved_views(viewType: str | None = None, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("saved_view:read"))):
     query = db.query(SavedView).filter(SavedView.owner == actor.name)
     if viewType:
         query = query.filter(SavedView.view_type == viewType)
@@ -41,7 +41,7 @@ async def list_saved_views(viewType: str | None = None, db: Session = Depends(ge
 
 
 @router.post("")
-async def create_saved_view(payload: SavedViewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reader", "editor", "reviewer", "admin"))):
+async def create_saved_view(payload: SavedViewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("saved_view:write"))):
     now = datetime.now(timezone.utc)
     view = SavedView(
         id=f"sv-{uuid4().hex[:12]}",
@@ -60,7 +60,7 @@ async def create_saved_view(payload: SavedViewPayload, db: Session = Depends(get
 
 
 @router.put("/{view_id}")
-async def update_saved_view(view_id: str, payload: SavedViewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reader", "editor", "reviewer", "admin"))):
+async def update_saved_view(view_id: str, payload: SavedViewPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("saved_view:write"))):
     view = db.query(SavedView).filter(SavedView.id == view_id, SavedView.owner == actor.name).first()
     if not view:
         raise HTTPException(status_code=404, detail="Saved view not found")
@@ -73,7 +73,7 @@ async def update_saved_view(view_id: str, payload: SavedViewPayload, db: Session
 
 
 @router.delete("/{view_id}")
-async def delete_saved_view(view_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reader", "editor", "reviewer", "admin"))):
+async def delete_saved_view(view_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("saved_view:write"))):
     view = db.query(SavedView).filter(SavedView.id == view_id, SavedView.owner == actor.name).first()
     if not view:
         raise HTTPException(status_code=404, detail="Saved view not found")

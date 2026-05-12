@@ -35,6 +35,11 @@ export function createRealCollectionService(): ICollectionService {
         body: JSON.stringify({ collectionId: collectionId ?? null }),
       })
     },
+    async setMemberships(collectionId, memberships) {
+      return apiRequest<{ collectionId: string; memberships: Array<{ userId: string; role: string }> }>(`/collections/${collectionId}/memberships`, {
+        method: 'PUT',
+        body: JSON.stringify({ memberships }),
+      })
+    },
   }
 }
-

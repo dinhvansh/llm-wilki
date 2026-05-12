@@ -1,0 +1,36 @@
+{
+  "id": "multimodal-review-assistant",
+  "name": "Multimodal Review Assistant",
+  "version": "0.1.0",
+  "scope": "workspace",
+  "status": "draft",
+  "reviewStatus": "internal_preview",
+  "owner": "Knowledge Ops",
+  "summary": "Reusable review helper that inspects page deltas, source artifacts, and authority conflicts before approval.",
+  "description": "This package represents a minimal internal skill registry entry. It bundles prompts and workflow expectations for review tasks that need page diffs, artifact evidence, and grounded Ask AI follow-up flows.",
+  "capabilities": [
+    "review evidence triage",
+    "artifact-aware source inspection",
+    "authority conflict summarization"
+  ],
+  "tags": [
+    "review",
+    "artifact",
+    "governance"
+  ],
+  "entryPoints": [
+    "review queue",
+    "page citation inspector",
+    "source artifact inspector"
+  ],
+  "metadataJson": {
+    "packageType": "workflow_pack",
+    "packageScopeDefinition": "Workflow pack combining prompt instructions, evidence triage expectations, and release checkpoints.",
+    "distribution": "file_registry",
+    "requiresPermissions": [
+      "review:read",
+      "skill:read"
+    ]
+  },
+  "reviewHistory": []
+}

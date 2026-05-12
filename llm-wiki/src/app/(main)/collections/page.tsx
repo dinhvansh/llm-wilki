@@ -72,6 +72,12 @@ export default function CollectionsPage() {
                      <div className="mt-1 text-lg font-semibold">{collection.pageCount}</div>
                    </Link>
                  </div>
+                 <Link
+                   href={`/ask?collectionId=${encodeURIComponent(collection.id)}&collectionTitle=${encodeURIComponent(collection.name)}&collectionDescription=${encodeURIComponent(collection.description)}`}
+                   className="mt-3 block text-xs text-primary hover:underline"
+                 >
+                   Ask this collection
+                 </Link>
                  <Link href={`/graph?collectionId=${collection.id}`} className="mt-3 block text-xs text-primary hover:underline">
                    Open collection graph
                  </Link>
@@ -83,4 +89,3 @@ export default function CollectionsPage() {
     </div>
   )
 }
-

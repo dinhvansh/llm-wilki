@@ -50,6 +50,36 @@ export function createMockSourceService(): ISourceService {
       return { data, total: chunks.length, page, pageSize, hasMore: start + pageSize < chunks.length }
     },
 
+    async getArtifacts(sourceId) {
+      await delay(120)
+      const source = MOCK_SOURCES.find(item => item.id === sourceId)
+      if (!source) throw new Error(`Source ${sourceId} not found`)
+      return [
+        {
+          id: `artifact-${sourceId}-ocr`,
+          sourceId,
+          artifactType: 'ocr',
+          title: 'OCR And Document Parsing',
+          status: 'available',
+          contentType: source.mimeType,
+          summary: 'Document parser metadata and OCR configuration are available.',
+          previewText: 'OCR languages: eng, vie',
+          metadataJson: { parser: 'mock', ocrLanguages: ['eng', 'vie'] },
+        },
+        {
+          id: `artifact-${sourceId}-structure`,
+          sourceId,
+          artifactType: 'structure',
+          title: 'Document Structure Map',
+          status: 'available',
+          contentType: 'application/json',
+          summary: 'Section-level structure and source walkthrough are available.',
+          previewText: 'Overview, Key Facts, Procedure',
+          metadataJson: { sectionCount: 3 },
+        },
+      ]
+    },
+
     async getClaims(sourceId) {
       await delay(200)
       return getClaimsForSource(sourceId)
@@ -273,6 +303,33 @@ export function createMockSourceService(): ISourceService {
       const source = MOCK_SOURCES.find(item => item.id === sourceId)
       if (!source) throw new Error(`Source ${sourceId} not found`)
       return { ...source, metadataJson: { ...source.metadataJson, archived: false, restoredAt: new Date().toISOString() } }
+    },
+
+    async updateMetadata(sourceId, payload) {
+      await delay(180)
+      const source = MOCK_SOURCES.find(item => item.id === sourceId)
+      if (!source) throw new Error(`Source ${sourceId} not found`)
+      return {
+        ...source,
+        description: payload.description ?? source.description,
+        tags: payload.tags ?? source.tags,
+        trustLevel: (payload.trustLevel as Source['trustLevel']) ?? source.trustLevel,
+        documentType: payload.documentType ?? source.documentType,
+        sourceStatus: payload.sourceStatus ?? source.sourceStatus,
+        authorityLevel: payload.authorityLevel ?? source.authorityLevel,
+        effectiveDate: payload.effectiveDate ?? source.effectiveDate,
+        version: payload.version ?? source.version,
+        owner: payload.owner ?? source.owner,
+        metadataJson: {
+          ...source.metadataJson,
+          ...(payload.documentType !== undefined ? { documentType: payload.documentType } : {}),
+          ...(payload.sourceStatus !== undefined ? { sourceStatus: payload.sourceStatus } : {}),
+          ...(payload.authorityLevel !== undefined ? { authorityLevel: payload.authorityLevel } : {}),
+          ...(payload.effectiveDate !== undefined ? { effectiveDate: payload.effectiveDate } : {}),
+          ...(payload.version !== undefined ? { version: payload.version } : {}),
+          ...(payload.owner !== undefined ? { owner: payload.owner } : {}),
+        },
+      }
     },
 
     async upload(file, collectionId) {

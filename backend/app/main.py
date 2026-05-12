@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, auth, collections, dashboard, diagrams, graph, jobs, lint, pages, query, review, saved_views, settings as runtime_settings, sources
+from app.api import admin, auth, collections, dashboard, diagrams, graph, jobs, lint, notes, pages, query, review, saved_views, settings as runtime_settings, skills, sources
 from app.config import settings
 from app.core.bootstrap import init_database
 from app.core.health import readiness_payload, validate_startup_config
@@ -58,6 +58,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(collections.router, prefix="/api/collections", tags=["Collections"])
 app.include_router(diagrams.router, prefix="/api/diagrams", tags=["Diagrams"])
 app.include_router(sources.router, prefix="/api/sources", tags=["Sources"])
+app.include_router(notes.router, prefix="/api/notes", tags=["Notes"])
 app.include_router(pages.router, prefix="/api/pages", tags=["Pages"])
 app.include_router(review.router, prefix="/api/review-items", tags=["Review"])
 app.include_router(saved_views.router, prefix="/api/saved-views", tags=["Saved Views"])
@@ -65,3 +66,4 @@ app.include_router(query.router, prefix="/api", tags=["Query"])
 app.include_router(graph.router, prefix="/api", tags=["Graph"])
 app.include_router(lint.router, prefix="/api", tags=["Lint"])
 app.include_router(runtime_settings.router, prefix="/api", tags=["Settings"])
+app.include_router(skills.router, prefix="/api", tags=["Skills"])

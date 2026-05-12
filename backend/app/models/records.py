@@ -30,11 +30,37 @@ class Source(Base):
     collection_id: Mapped[str | None] = mapped_column(ForeignKey("collections.id"), index=True)
 
     chunks: Mapped[list["SourceChunk"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+    artifacts: Mapped[list["SourceArtifactRecord"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     knowledge_units: Mapped[list["KnowledgeUnit"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     extraction_runs: Mapped[list["ExtractionRun"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     page_links: Mapped[list["PageSourceLink"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     suggestions: Mapped[list["SourceSuggestion"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+    storage_objects: Mapped[list["StorageObject"]] = relationship(back_populates="source")
     collection: Mapped["Collection | None"] = relationship(back_populates="sources")
+
+
+class StorageObject(Base):
+    __tablename__ = "storage_objects"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    backend: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    bucket: Mapped[str | None] = mapped_column(String(255), index=True)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+    local_path: Mapped[str | None] = mapped_column(String(1024))
+    original_filename: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checksum_sha256: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    lifecycle_state: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    owner: Mapped[str] = mapped_column(String(128), nullable=False, default="system", index=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id"), index=True)
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("source_artifacts.id"), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    source: Mapped["Source | None"] = relationship(back_populates="storage_objects")
+    artifact: Mapped["SourceArtifactRecord | None"] = relationship(back_populates="storage_objects")
 
 
 class Collection(Base):
@@ -51,6 +77,21 @@ class Collection(Base):
     sources: Mapped[list["Source"]] = relationship(back_populates="collection")
     pages: Mapped[list["Page"]] = relationship(back_populates="collection")
     diagrams: Mapped[list["Diagram"]] = relationship(back_populates="collection")
+    memberships: Mapped[list["CollectionMembership"]] = relationship(back_populates="collection", cascade="all, delete-orphan")
+    notes: Mapped[list["Note"]] = relationship(back_populates="collection")
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    users: Mapped[list["User"]] = relationship(back_populates="department")
 
 
 class SourceChunk(Base):
@@ -72,6 +113,87 @@ class SourceChunk(Base):
     source: Mapped["Source"] = relationship(back_populates="chunks")
     claims: Mapped[list["Claim"]] = relationship(back_populates="source_chunk", cascade="all, delete-orphan")
     knowledge_units: Mapped[list["KnowledgeUnit"]] = relationship(back_populates="source_chunk", cascade="all, delete-orphan")
+
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="private", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    owner_name: Mapped[str] = mapped_column(String(128), nullable=False, default="Current User", index=True)
+    collection_id: Mapped[str | None] = mapped_column(ForeignKey("collections.id"), index=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    archived_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+    anchors: Mapped[list["NoteAnchor"]] = relationship(back_populates="note", cascade="all, delete-orphan")
+    versions: Mapped[list["NoteVersion"]] = relationship(back_populates="note", cascade="all, delete-orphan")
+    owner: Mapped["User | None"] = relationship(back_populates="notes")
+    collection: Mapped["Collection | None"] = relationship(back_populates="notes")
+
+
+class NoteAnchor(Base):
+    __tablename__ = "note_anchors"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    note_id: Mapped[str] = mapped_column(ForeignKey("notes.id"), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id"), index=True)
+    chunk_id: Mapped[str | None] = mapped_column(ForeignKey("source_chunks.id"), index=True)
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("source_artifacts.id"), index=True)
+    page_id: Mapped[str | None] = mapped_column(ForeignKey("pages.id"), index=True)
+    section_key: Mapped[str | None] = mapped_column(String(128), index=True)
+    review_item_id: Mapped[str | None] = mapped_column(ForeignKey("review_items.id"), index=True)
+    ask_message_id: Mapped[str | None] = mapped_column(ForeignKey("chat_messages.id"), index=True)
+    citation_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    note: Mapped["Note"] = relationship(back_populates="anchors")
+
+
+class NoteVersion(Base):
+    __tablename__ = "note_versions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    note_id: Mapped[str] = mapped_column(ForeignKey("notes.id"), nullable=False, index=True)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    change_summary: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    note: Mapped["Note"] = relationship(back_populates="versions")
+
+
+class SourceArtifactRecord(Base):
+    __tablename__ = "source_artifacts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="available")
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    summary: Mapped[str | None] = mapped_column(Text)
+    preview_text: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(String(512))
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    source: Mapped["Source"] = relationship(back_populates="artifacts")
+    storage_objects: Mapped[list["StorageObject"]] = relationship(back_populates="artifact")
 
 
 class Entity(Base):
@@ -415,12 +537,30 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, index=True, default="reader")
+    department_id: Mapped[str | None] = mapped_column(ForeignKey("departments.id"), index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     sessions: Mapped[list["AuthSession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    collection_memberships: Mapped[list["CollectionMembership"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    department: Mapped["Department | None"] = relationship(back_populates="users")
+    notes: Mapped[list["Note"]] = relationship(back_populates="owner")
+
+
+class CollectionMembership(Base):
+    __tablename__ = "collection_memberships"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    collection_id: Mapped[str] = mapped_column(ForeignKey("collections.id"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="viewer", index=True)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    collection: Mapped["Collection"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(back_populates="collection_memberships")
 
 
 class AuthSession(Base):
@@ -520,6 +660,24 @@ class SavedView(Base):
     filters_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class EvalRun(Base):
+    __tablename__ = "eval_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    run_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed", index=True)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    quality_gates_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    tags_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    report_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
 
 class RuntimeConfig(Base):

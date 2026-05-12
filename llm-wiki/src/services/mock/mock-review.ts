@@ -25,6 +25,19 @@ export function createMockReviewService(): IReviewService {
       return item
     },
 
+    async addComment(id, comment) {
+      await delay(200)
+      const item = MOCK_REVIEW_ITEMS.find(r => r.id === id)
+      if (!item) throw new Error(`Review item ${id} not found`)
+      return {
+        id: `mock-comment-${Date.now()}`,
+        reviewItemId: id,
+        actor: 'Mock Reviewer',
+        comment,
+        createdAt: new Date().toISOString(),
+      }
+    },
+
     async approve(id, _comment) {
       await delay(400)
       const item = MOCK_REVIEW_ITEMS.find(r => r.id === id)

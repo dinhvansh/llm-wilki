@@ -22,6 +22,12 @@ export function createRealReviewService(): IReviewService {
     async getItem(id) {
       return apiRequest<ReviewItem>(`/review-items/${id}`)
     },
+    async addComment(id, comment) {
+      return apiRequest<{ id: string; reviewItemId: string; actor: string; comment: string; createdAt: string }>(`/review-items/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ comment }),
+      })
+    },
     async approve(id, comment) {
       const query = comment ? `?comment=${encodeURIComponent(comment)}` : ''
       return apiRequest<{ success: boolean; page?: Page }>(`/review-items/${id}/approve${query}`, { method: 'POST' })

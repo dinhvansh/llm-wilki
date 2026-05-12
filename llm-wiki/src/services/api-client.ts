@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000/api'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '/backend-api'
 
 function getActorHeader() {
   if (typeof window === 'undefined') return 'Current User'
@@ -21,6 +21,14 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     },
     cache: 'no-store',
   })
+
+  if (response.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/login')) {
+    window.localStorage.removeItem('llm-wiki-auth-token')
+    window.localStorage.removeItem('llm-wiki-auth-user')
+    window.localStorage.removeItem('llm-wiki-user')
+    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`
+    throw new Error('Authentication required')
+  }
 
   if (!response.ok) {
     const text = await response.text()

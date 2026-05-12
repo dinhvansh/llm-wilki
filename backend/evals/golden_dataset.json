@@ -4,20 +4,114 @@
     {
       "id": "citation-accuracy",
       "query": "What is required for citation accuracy?",
+      "tags": ["grounding", "citation", "policy"],
       "expectedTerms": ["citation", "accuracy", "90"],
       "expectedSourceIds": ["src-001"]
     },
     {
       "id": "hybrid-retrieval",
       "query": "How should RAG retrieval work?",
+      "tags": ["retrieval", "definition", "rag"],
       "expectedTerms": ["hybrid", "retrieval", "bm25"],
       "expectedSourceIds": ["src-002"]
     },
     {
       "id": "safety-evaluation",
       "query": "What safety evaluation is required before production?",
+      "tags": ["safety", "policy", "grounding"],
       "expectedTerms": ["safety", "evaluation", "production"],
       "expectedSourceIds": ["src-001"]
+    }
+  ],
+  "behaviorCases": [
+    {
+      "id": "clarification-followup",
+      "type": "clarification",
+      "tags": ["followup", "clarification", "chat"],
+      "initialQuery": "What is RAG and how does it work?",
+      "followupQuery": "trả lời sai rồi",
+      "expectedAnswerType": "clarification"
+    },
+    {
+      "id": "followup-resolution",
+      "type": "followup_resolution",
+      "tags": ["followup", "retrieval", "chat"],
+      "initialQuery": "What is RAG and how does it work?",
+      "followupQuery": "ý tôi là hybrid retrieval",
+      "expectedAnswerType": "clarified_answer",
+      "expectedTerms": ["hybrid", "retrieval"],
+      "expectedSourceIds": ["src-002"]
+    },
+    {
+      "id": "source-lookup",
+      "type": "source_lookup",
+      "tags": ["source-lookup", "grounding"],
+      "query": "Nguồn nào nói về citation accuracy?",
+      "expectedAnswerType": "source_lookup",
+      "expectedSourceIds": ["src-001"]
+    },
+    {
+      "id": "conflict-priority",
+      "type": "conflict",
+      "tags": ["conflict", "authority", "policy"],
+      "query": "What conflict exists between Global Access Policy and Regional Access Note?",
+      "expectedAnswerType": "conflict",
+      "expectedPreferredSourceTitle": "Global Access Policy",
+      "expectedRoles": ["conflict_side_a", "conflict_side_b"]
+    },
+    {
+      "id": "analysis-planner",
+      "type": "analysis_planning",
+      "tags": ["planner", "analysis", "notebook"],
+      "query": "If I want to demo Power Toolkit, what should I prepare first, what risks should I watch for, and what should I test first?",
+      "expectedAnswerType": "analysis",
+      "expectedPlannerStrategy": "decompose",
+      "expectedPlannerIntents": ["procedure", "risk_review"]
+    },
+    {
+      "id": "scoped-source-ask",
+      "type": "scoped_ask",
+      "tags": ["scope", "notebook", "source"],
+      "query": "Summarize the first step in the access approval runbook.",
+      "sourceId": "src-eval-notebook-source",
+      "expectedScopeId": "src-eval-notebook-source",
+      "expectedTopCandidateType": "notebook_note"
+    },
+    {
+      "id": "notebook-summary",
+      "type": "notebook_summary",
+      "tags": ["notebook", "summary"],
+      "query": "Give a summary of the access approval runbook.",
+      "sourceId": "src-eval-notebook-source",
+      "expectedTerms": ["requester", "identity", "security"],
+      "expectedTopCandidateType": "notebook_note"
+    },
+    {
+      "id": "authority-synthesis",
+      "type": "authority_synthesis",
+      "tags": ["authority", "notebook", "conflict"],
+      "query": "What conflict exists between Global Access Policy and Regional Access Note?",
+      "expectedAnswerType": "conflict",
+      "expectedPreferredSourceTitle": "Global Access Policy",
+      "expectedAnswerSections": ["## Why", "## Evidence By Source", "## Conflicts / Caveats", "## Recommended Next Question"]
+    },
+    {
+      "id": "suggestion-usefulness",
+      "type": "suggestion_usefulness",
+      "tags": ["suggestions", "notebook"],
+      "query": "What should I do first before approving access?",
+      "sourceId": "src-eval-notebook-source",
+      "expectedCategories": ["procedure", "risk", "summary"],
+      "minimumPromptCount": 3
+    },
+    {
+      "id": "artifact-multimodal-summary",
+      "type": "notebook_summary",
+      "tags": ["multimodal", "artifact", "notebook"],
+      "query": "What evidence should I inspect first in the release review artifact pack?",
+      "sourceId": "src-eval-multimodal-artifact",
+      "expectedTerms": ["checklist", "artifact", "approval"],
+      "expectedTopCandidateType": "artifact_summary"
     }
   ],
   "syntheticCases": {

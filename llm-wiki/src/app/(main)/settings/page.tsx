@@ -319,7 +319,7 @@ export default function SettingsPage() {
             <TextInput value={form.lintPageLimit} onChange={e => setForm(prev => ({ ...prev, lintPageLimit: Number(e.target.value) }))} type="number" min={50} max={5000} />
           </Field>
           <Field label="Auto Review Threshold">
-            <TextInput value={form.autoReviewThreshold} onChange={e => setForm(prev => ({ ...prev, autoReviewThreshold: Number(e.target.value) }))} type="number" min={0} max={1} step="0.05" />
+            <TextInput value={form.autoReviewThreshold} onChange={e => setForm(prev => ({ ...prev, autoReviewThreshold: Number(e.target.value) }))} type="number" min={0} max={1} step="0.01" />
           </Field>
         </Section>
 

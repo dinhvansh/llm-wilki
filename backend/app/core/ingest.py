@@ -107,6 +107,29 @@ def parse_document(path: Path, mime_type: str, source_type: str) -> ParsedDocume
 
     if source_type in {"markdown", "pdf", "docx", "image_ocr"}:
         text, metadata = parse_with_docling(path, mime_type, source_type)
+        metadata = dict(metadata or {})
+        if source_type == "docx":
+            try:
+                document = Document(path)
+                ordered_blocks, image_urls = parse_docx_blocks(document, path)
+                metadata = {
+                    **metadata,
+                    "orderedBlocks": ordered_blocks,
+                    "images": image_urls,
+                    "imageCount": len(image_urls),
+                    "tableCount": sum(1 for block in ordered_blocks if block.get("type") == "table"),
+                }
+            except Exception:
+                # Keep docling output if block-level enrichment fails.
+                metadata = metadata
+        elif source_type == "image_ocr":
+            image_url = public_upload_url(path)
+            metadata = {
+                **metadata,
+                "orderedBlocks": [{"type": "image", "url": image_url, "alt": path.stem or "Uploaded image"}],
+                "images": [image_url],
+                "imageCount": 1,
+            }
         return ParsedDocument(
             text=normalize_text(text),
             mime_type=mime_type,
@@ -177,15 +200,294 @@ def tokenize(text: str) -> list[str]:
     return [token.lower() for token in TOKEN_RE.findall(text)]
 
 
+def promote_heading_lines(text: str) -> str:
+    lines = text.splitlines()
+    promoted: list[str] = []
+
+    def next_non_empty(index: int) -> str:
+        for candidate in lines[index + 1 :]:
+            stripped = candidate.strip()
+            if stripped:
+                return stripped
+        return ""
+
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("|") or stripped.startswith("```"):
+            promoted.append(raw_line)
+            continue
+        words = stripped.split()
+        if (
+            1 <= len(words) <= 6
+            and len(stripped) <= 60
+            and not re.search(r"[.!?;:]$", stripped)
+            and stripped == stripped.title()
+            and next_non_empty(index)
+        ):
+            promoted.append(f"## {stripped}")
+            continue
+        promoted.append(raw_line)
+    return "\n".join(promoted)
+
+
+def detect_language(text: str) -> str:
+    sample = (text or "")[:4000].lower()
+    if re.search(r"[ăâđêôơư]", sample):
+        return "vi"
+    common_vi = sum(1 for token in (" va ", " cua ", " cho ", " quy trinh ", " chinh sach ", " duoc ") if token in f" {sample} ")
+    common_en = sum(1 for token in (" the ", " and ", " policy ", " process ", " must ", " should ") if token in f" {sample} ")
+    return "vi" if common_vi > common_en else "en"
+
+
+def classify_document_profile(title: str, parsed: ParsedDocument, chunks: list[dict], summary: str = "") -> dict:
+    combined = "\n".join([title, summary, parsed.text[:12000]]).lower()
+    source_type = (parsed.source_type or "").lower()
+    scores = {
+        "policy": 0.0,
+        "sop": 0.0,
+        "meeting_note": 0.0,
+        "report": 0.0,
+        "reference": 0.0,
+        "user_note": 0.0,
+    }
+
+    if re.search(r"\bpolicy\b|\bstandard\b|\bgovernance\b|\bcompliance\b|\bshall\b|\bmust\b|\brequired\b", combined):
+        scores["policy"] += 0.75
+    if re.search(r"\bsop\b|\bprocedure\b|\bworkflow\b|\bchecklist\b|\bstep\b|\bhow to\b", combined):
+        scores["sop"] += 0.72
+    if re.search(r"\bmeeting\b|\bminutes\b|\battendees\b|\baction items?\b|\bdecisions?\b|\bdiscussion\b", combined):
+        scores["meeting_note"] += 0.78
+    if re.search(r"\breport\b|\bexecutive summary\b|\bfindings\b|\banalysis\b|\brecommendations?\b|\bcurrent state\b|\bgoal\b", combined):
+        scores["report"] += 0.7
+    if re.search(r"\breference\b|\bglossary\b|\bapi\b|\bfield\b|\bparameter\b|\bdefinition\b|\bfaq\b", combined):
+        scores["reference"] += 0.66
+    if re.search(r"\bnotes?\b|\bbrainstorm\b|\bdraft\b|\bidea\b|\bpersonal\b", combined):
+        scores["user_note"] += 0.58
+
+    if source_type == "transcript":
+        scores["meeting_note"] += 0.28
+    if source_type == "url":
+        scores["reference"] += 0.12
+    if source_type == "txt":
+        scores["user_note"] += 0.1
+
+    numbered_steps = sum(1 for chunk in chunks[:10] if re.search(r"(?:^|\s)\d+\.(?:\s|$)|\bstep\s+\d+\b", chunk.get("content", "").lower()))
+    if numbered_steps >= 2:
+        scores["sop"] += 0.2
+
+    selected_type = max(scores.items(), key=lambda item: item[1])[0]
+    confidence = max(scores.values())
+    if confidence < 0.45:
+        selected_type = "report" if source_type in {"pdf", "docx", "markdown"} else "reference"
+        confidence = 0.45
+
+    reasons: list[str] = []
+    for label, pattern in [
+        ("policy_language", r"\bpolicy\b|\bshall\b|\bmust\b|\brequired\b"),
+        ("procedure_markers", r"\bprocedure\b|\bworkflow\b|\bstep\b|\bchecklist\b"),
+        ("meeting_markers", r"\bmeeting\b|\bminutes\b|\baction items?\b"),
+        ("report_markers", r"\bexecutive summary\b|\bfindings\b|\brecommendations?\b"),
+        ("reference_markers", r"\bglossary\b|\bdefinition\b|\bfield\b|\bparameter\b"),
+    ]:
+        if re.search(pattern, combined):
+            reasons.append(label)
+
+    return {
+        "documentType": selected_type,
+        "confidence": round(min(confidence, 0.95), 2),
+        "reasons": reasons[:5],
+        "sourceType": source_type,
+    }
+
+
+def annotate_chunk_section_roles(chunks: list[dict], document_type: str) -> list[dict]:
+    def infer_role(chunk: dict) -> str:
+        heading_path = chunk.get("metadata", {}).get("headingPath") or []
+        heading_text = " ".join([str(part) for part in heading_path if part]).lower()
+        content_text = str(chunk.get("content") or "").lower()
+        section_text = " ".join(filter(None, [str(chunk.get("section_title") or ""), heading_text, content_text[:280]]))
+
+        if document_type == "policy":
+            if re.search(r"\bscope\b|\bapplies to\b|\bcoverage\b", section_text):
+                return "scope"
+            if re.search(r"\bexception\b|\bwaiver\b|\bunless\b", section_text):
+                return "exception"
+            if re.search(r"\bowner\b|\bresponsib", section_text):
+                return "owner"
+            if re.search(r"\bmust\b|\bshall\b|\brequired\b|\bprohibited\b|\bnot allowed\b", section_text):
+                return "rule"
+        if document_type == "sop":
+            if re.search(r"\bprerequisite\b|\bbefore you start\b|\binputs?\b", section_text):
+                return "prerequisite"
+            if re.search(r"\bvalidate\b|\bcheck\b|\bverify\b|\bacceptance\b", section_text):
+                return "validation"
+            if re.search(r"(?:^|\s)\d+\.(?:\s|$)|\bstep\s+\d+\b|\bprocedure\b", section_text):
+                return "step"
+        if document_type == "meeting_note":
+            if re.search(r"\bdecision\b|\bagreed\b|\bapproved\b", section_text):
+                return "decision"
+            if re.search(r"\baction items?\b|\bnext steps?\b|\bowner\b", section_text):
+                return "action_item"
+            if re.search(r"\brisk\b|\bissue\b|\bblocker\b", section_text):
+                return "issue"
+        if document_type == "report":
+            if re.search(r"\bproblem\b|\bchallenge\b|\bpain point\b", section_text):
+                return "problem"
+            if re.search(r"\bcurrent state\b|\bas-is\b|\bbaseline\b", section_text):
+                return "current_state"
+            if re.search(r"\bgoal\b|\btarget\b|\bobjective\b", section_text):
+                return "goal"
+            if re.search(r"\brecommendation\b|\bproposal\b|\bsolution\b", section_text):
+                return "recommendation"
+        if document_type == "reference":
+            if re.search(r"\bdefinition\b|\bmeaning\b|\brefers to\b", section_text):
+                return "definition"
+            if re.search(r"\bfield\b|\bparameter\b|\binput\b|\boutput\b", section_text):
+                return "field_reference"
+            if re.search(r"\bexample\b|\bsample\b", section_text):
+                return "example"
+        return "general"
+
+    for chunk in chunks:
+        metadata = dict(chunk.get("metadata") or {})
+        metadata["sectionRole"] = infer_role(chunk)
+        metadata["documentType"] = document_type
+        chunk["metadata"] = metadata
+    return chunks
+
+
 def split_into_chunks(text: str, max_words: int | None = None, overlap: int | None = None) -> list[dict]:
     runtime = load_runtime_snapshot()
     max_words = runtime.chunk_size_words if max_words is None else max_words
     overlap = runtime.chunk_overlap_words if overlap is None else overlap
     if runtime.chunk_mode == "structured":
-        structured_chunks = split_into_structured_chunks(text, max_words=max_words, overlap=overlap)
+        structured_chunks = split_into_structured_chunks(promote_heading_lines(text), max_words=max_words, overlap=overlap)
         if structured_chunks:
             return structured_chunks
     return split_into_window_chunks(text, max_words=max_words, overlap=overlap)
+
+
+def apply_semantic_unit_chunking(chunks: list[dict], document_type: str, max_words: int) -> list[dict]:
+    semantic_chunks: list[dict] = []
+    for chunk in chunks:
+        content = str(chunk.get("content") or "").strip()
+        metadata = dict(chunk.get("metadata") or {})
+        role = str(metadata.get("sectionRole") or "general")
+        if len(content.split()) <= max_words or role not in {"step", "rule", "exception", "decision", "recommendation", "definition", "scope"}:
+            semantic_chunks.append(chunk)
+            continue
+
+        parts = [part.strip() for part in re.split(r"\n{2,}", content) if part.strip()]
+        if len(parts) <= 1:
+            semantic_chunks.append(chunk)
+            continue
+
+        for index, part in enumerate(parts, start=1):
+            part_metadata = {
+                **metadata,
+                "chunkingMode": "semantic",
+                "semanticUnit": role,
+                "semanticPartIndex": index,
+                "semanticPartCount": len(parts),
+                "documentType": document_type,
+            }
+            semantic_chunks.append(
+                {
+                    "section_title": chunk.get("section_title"),
+                    "content": part,
+                    "token_count": len(tokenize(part)),
+                    "metadata": part_metadata,
+                }
+            )
+    return semantic_chunks
+
+
+def build_section_summaries(chunks: list[dict], document_type: str) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    for chunk in chunks:
+        metadata = chunk.get("metadata") or {}
+        heading_path = metadata.get("headingPath") or []
+        section_key = " > ".join([str(part) for part in heading_path if part]) or str(chunk.get("section_title") or "Document")
+        grouped.setdefault(section_key, []).append(chunk)
+
+    summaries: list[dict] = []
+    for index, (section_key, section_chunks) in enumerate(grouped.items(), start=1):
+        combined = "\n\n".join(str(chunk.get("content") or "").strip() for chunk in section_chunks if str(chunk.get("content") or "").strip())
+        role_counts = Counter(str((chunk.get("metadata") or {}).get("sectionRole") or "general") for chunk in section_chunks)
+        top_roles = [role for role, _count in role_counts.most_common(3)]
+        sentence = SENTENCE_RE.split(combined.strip())[0].strip() if combined.strip() else ""
+        summary = sentence[:280] if sentence else combined[:280]
+        heading_path = list((section_chunks[0].get("metadata") or {}).get("headingPath") or [])
+        summaries.append(
+            {
+                "sectionKey": f"sec-{slugify(section_key) or index}",
+                "title": section_chunks[0].get("section_title") or section_key,
+                "headingPath": heading_path,
+                "summary": summary,
+                "documentType": document_type,
+                "chunkCount": len(section_chunks),
+                "roles": top_roles,
+                "firstChunkIndex": min(int(chunk.get("chunk_index_override", idx)) for idx, chunk in enumerate(section_chunks)),
+            }
+        )
+    return summaries
+
+
+def build_source_sections(chunks: list[dict], section_summaries: list[dict], document_type: str) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    for chunk in chunks:
+        metadata = chunk.get("metadata") or {}
+        heading_path = metadata.get("headingPath") or []
+        section_key = " > ".join([str(part) for part in heading_path if part]) or str(chunk.get("section_title") or "Document")
+        grouped.setdefault(section_key, []).append(chunk)
+
+    sections: list[dict] = []
+    summary_map = {str(item.get("sectionKey") or ""): item for item in section_summaries}
+    summary_by_title = {str(item.get("title") or ""): item for item in section_summaries}
+    for index, (section_key, section_chunks) in enumerate(grouped.items(), start=1):
+        first = section_chunks[0]
+        first_metadata = first.get("metadata") or {}
+        heading_path = list(first_metadata.get("headingPath") or [])
+        title = first.get("section_title") or section_key
+        summary_key = f"sec-{slugify(section_key) or index}"
+        summary_item = summary_map.get(summary_key) or summary_by_title.get(str(title))
+        sections.append(
+            {
+                "sectionKey": summary_item.get("sectionKey") if summary_item else summary_key,
+                "title": title,
+                "headingPath": heading_path,
+                "documentType": document_type,
+                "roles": _unique_preserve_order([str((chunk.get("metadata") or {}).get("sectionRole") or "general") for chunk in section_chunks]),
+                "chunkIndexes": [int((chunk.get("metadata") or {}).get("chunkIndex") or 0) for chunk in section_chunks],
+                "pageRange": {
+                    "start": min(int((chunk.get("metadata") or {}).get("pageNumber") or idx + 1) for idx, chunk in enumerate(section_chunks)),
+                    "end": max(int((chunk.get("metadata") or {}).get("pageNumber") or idx + 1) for idx, chunk in enumerate(section_chunks)),
+                },
+                "summary": (summary_item or {}).get("summary") if summary_item else None,
+                "bodyPreview": "\n\n".join(str(chunk.get("content") or "").strip() for chunk in section_chunks)[:600],
+            }
+        )
+    return sections
+
+
+def build_chunk_profile(chunks: list[dict], document_profile: dict, section_summaries: list[dict], source_sections: list[dict]) -> dict:
+    role_counts = Counter(str((chunk.get("metadata") or {}).get("sectionRole") or "general") for chunk in chunks)
+    chunk_mode_counts = Counter(str((chunk.get("metadata") or {}).get("chunkingMode") or "window") for chunk in chunks)
+    semantic_unit_counts = Counter(str((chunk.get("metadata") or {}).get("semanticUnit") or "") for chunk in chunks if (chunk.get("metadata") or {}).get("semanticUnit"))
+    avg_tokens = round(sum(int(chunk.get("token_count") or 0) for chunk in chunks) / len(chunks), 2) if chunks else 0
+    return {
+        "documentType": document_profile["documentType"],
+        "documentTypeConfidence": document_profile["confidence"],
+        "documentTypeReasons": list(document_profile.get("reasons") or []),
+        "sourceType": document_profile.get("sourceType"),
+        "chunkCount": len(chunks),
+        "sectionCount": len(section_summaries),
+        "sourceSectionCount": len(source_sections),
+        "avgTokenCount": avg_tokens,
+        "chunkModeCounts": dict(chunk_mode_counts),
+        "roleCounts": dict(role_counts),
+        "semanticUnitCounts": dict(semantic_unit_counts),
+    }
 
 
 def split_into_window_chunks(text: str, max_words: int, overlap: int) -> list[dict]:
@@ -537,7 +839,7 @@ def table_to_markdown(table: Table) -> str:
 
 def public_upload_url(path: Path) -> str:
     relative = path.relative_to(ensure_upload_dir()).as_posix()
-    return f"http://localhost:{settings.API_PORT}/uploads/{quote(relative)}"
+    return f"/backend-uploads/{quote(relative)}"
 
 
 def summarize_text(title: str, text: str) -> tuple[str, list[str]]:
@@ -1040,7 +1342,28 @@ def run_ingest_pipeline(path: Path, mime_type: str, source_type: str, title: str
     parsed = parse_document(path, mime_type, source_type)
     chunks = split_into_chunks(parsed.text)
     summary, key_facts = summarize_text(title, parsed.text[:16000])
+    document_profile = classify_document_profile(title, parsed, chunks, summary)
+    parsed.metadata = {
+        **(parsed.metadata or {}),
+        "documentType": document_profile["documentType"],
+        "documentTypeConfidence": document_profile["confidence"],
+        "documentTypeReasons": document_profile["reasons"],
+        "language": detect_language(parsed.text),
+    }
+    chunks = annotate_chunk_section_roles(chunks, document_profile["documentType"])
+    runtime = load_runtime_snapshot()
+    chunks = apply_semantic_unit_chunking(chunks, document_profile["documentType"], runtime.chunk_size_words)
+    for chunk_index, chunk in enumerate(chunks):
+        metadata = dict(chunk.get("metadata") or {})
+        metadata["chunkIndex"] = chunk_index
+        chunk["metadata"] = metadata
+    section_summaries = build_section_summaries(chunks, document_profile["documentType"])
+    source_sections = build_source_sections(chunks, section_summaries, document_profile["documentType"])
+    parsed.metadata["sectionSummaries"] = section_summaries
+    parsed.metadata["sourceSections"] = source_sections
+    parsed.metadata["chunkProfile"] = build_chunk_profile(chunks, document_profile, section_summaries, source_sections)
     tags = build_tags(title, parsed.text)
+    parsed.metadata["keywords"] = tags
     entities = extract_entities(parsed.text)
     entity_id_map = {entity["name"]: entity["id"] for entity in entities}
     claims = build_claims(chunks, entity_id_map)
@@ -1061,6 +1384,22 @@ def run_ingest_pipeline(path: Path, mime_type: str, source_type: str, title: str
         IngestStageResult(name="extract_timeline", status="completed", details={"eventCount": len(timeline_events)}),
         IngestStageResult(name="extract_glossary", status="completed", details={"termCount": len(glossary_terms)}),
         IngestStageResult(name="classify_page_types", status="completed", details={"pageTypes": [candidate["pageType"] for candidate in page_type_candidates]}),
+        IngestStageResult(name="classify_document_type", status="completed", details=document_profile),
+        IngestStageResult(
+            name="detect_section_roles",
+            status="completed",
+            details={
+                "roles": {
+                    role: count
+                    for role, count in Counter(str((chunk.get("metadata") or {}).get("sectionRole") or "general") for chunk in chunks).items()
+                }
+            },
+        ),
+        IngestStageResult(
+            name="build_section_summaries",
+            status="completed",
+            details={"sectionCount": len(section_summaries), "sectionTitles": [item["title"] for item in section_summaries[:8]]},
+        ),
     ]
 
     return IngestArtifacts(

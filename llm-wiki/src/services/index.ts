@@ -11,6 +11,7 @@ export {
 import {
   createMockDashboardService,
   createMockCollectionService,
+  createMockAdminService,
   createMockDiagramService,
   createMockGraphService,
   createMockLintService,
@@ -18,9 +19,11 @@ import {
   createMockQueryService,
   createMockReviewService,
   createMockSettingsService,
+  createMockSkillService,
   createMockSourceService,
 } from './mock'
 import { createRealCollectionService } from './real-collections'
+import { createRealAdminService } from './real-admin'
 import { createRealDiagramService } from './real-diagrams'
 import { createRealDashboardService } from './real-dashboard'
 import { createRealGraphService } from './real-graph'
@@ -29,12 +32,15 @@ import { createRealPageService } from './real-pages'
 import { createRealQueryService } from './real-query'
 import { createRealReviewService } from './real-review'
 import { createRealSettingsService } from './real-settings'
+import { createRealSkillService } from './real-skills'
 import { createRealSourceService } from './real-sources'
+import { createRealNoteService } from './real-notes'
 
 const useRealApi = process.env.NEXT_PUBLIC_USE_REAL_API !== 'false'
 
 export const dashboardService = useRealApi ? createRealDashboardService() : createMockDashboardService()
 export const collectionService = useRealApi ? createRealCollectionService() : createMockCollectionService()
+export const adminService = useRealApi ? createRealAdminService() : createMockAdminService()
 export const diagramService = useRealApi ? createRealDiagramService() : createMockDiagramService()
 export const sourceService = useRealApi ? createRealSourceService() : createMockSourceService()
 export const pageService = useRealApi ? createRealPageService() : createMockPageService()
@@ -43,5 +49,7 @@ export const queryService = useRealApi ? createRealQueryService() : createMockQu
 export const graphService = useRealApi ? createRealGraphService() : createMockGraphService()
 export const lintService = useRealApi ? createRealLintService() : createMockLintService()
 export const settingsService = useRealApi ? createRealSettingsService() : createMockSettingsService()
+export const skillService = useRealApi ? createRealSkillService() : createMockSkillService()
+export const noteService = createRealNoteService()
 
-export type { ICollectionService, IDashboardService, IDiagramService, IGraphService, ILintService, IPageService, IQueryService, IReviewService, ISettingsService, ISourceService } from './types'
+export type { IAdminService, ICollectionService, IDashboardService, IDiagramService, IGraphService, ILintService, INoteService, IPageService, IQueryService, IReviewService, ISettingsService, ISkillService, ISourceService } from './types'

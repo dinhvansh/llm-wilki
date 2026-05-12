@@ -14,6 +14,7 @@ export const MOCK_COLLECTIONS: Collection[] = [
     color: 'emerald',
     sourceCount: 1,
     pageCount: 2,
+    memberCount: 3,
     createdAt: '2025-01-01T00:00:00Z',
     updatedAt: '2025-03-01T00:00:00Z',
   },
@@ -25,6 +26,7 @@ export const MOCK_COLLECTIONS: Collection[] = [
     color: 'blue',
     sourceCount: 3,
     pageCount: 4,
+    memberCount: 5,
     createdAt: '2025-01-05T00:00:00Z',
     updatedAt: '2025-03-02T00:00:00Z',
   },
@@ -36,6 +38,7 @@ export const MOCK_COLLECTIONS: Collection[] = [
     color: 'amber',
     sourceCount: 1,
     pageCount: 1,
+    memberCount: 2,
     createdAt: '2025-01-10T00:00:00Z',
     updatedAt: '2025-03-03T00:00:00Z',
   },
@@ -57,6 +60,7 @@ export function createMockCollectionService(): ICollectionService {
         color: payload.color ?? 'slate',
         sourceCount: 0,
         pageCount: 0,
+        memberCount: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -81,6 +85,13 @@ export function createMockCollectionService(): ICollectionService {
       if (!MOCK_PAGES.some(page => page.id === pageId)) throw new Error(`Page ${pageId} not found`)
       return { pageId, collectionId }
     },
+    async setMemberships(collectionId, memberships) {
+      await delay()
+      const collection = MOCK_COLLECTIONS.find(item => item.id === collectionId)
+      if (!collection) throw new Error(`Collection ${collectionId} not found`)
+      collection.memberCount = memberships.length
+      collection.updatedAt = new Date().toISOString()
+      return { collectionId, memberships }
+    },
   }
 }
-

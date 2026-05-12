@@ -2,7 +2,7 @@ import type {
   Source, SourceChunk, SourceSuggestion, Page, PageVersion, Diagram, DiagramVersion, AuditLog, ReviewItem, Job,
   DashboardStats, GraphData, AskResponse, ChatSession, ChatSessionDetail, SearchResult,
   PaginatedResponse, Entity, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
-  KnowledgeUnit, ExtractionRun
+  KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, ManagedUser, Department, AdminRole, Note
 } from '@/lib/types'
 import type { PageStatus, SourceStatus, SeverityLevel, ReviewIssueType } from '@/lib/constants'
 
@@ -10,6 +10,7 @@ export interface ISourceService {
   list(params?: { page?: number; pageSize?: number; status?: SourceStatus; type?: string; search?: string; collectionId?: string }): Promise<PaginatedResponse<Source>>
   getById(id: string): Promise<Source>
   getChunks(sourceId: string, params?: { page?: number; pageSize?: number }): Promise<PaginatedResponse<SourceChunk>>
+  getArtifacts(sourceId: string): Promise<SourceArtifact[]>
   getClaims(sourceId: string): Promise<Claim[]>
   getKnowledgeUnits(sourceId: string): Promise<KnowledgeUnit[]>
   getExtractionRuns(sourceId: string): Promise<ExtractionRun[]>
@@ -28,9 +29,37 @@ export interface ISourceService {
   cancelJob(jobId: string): Promise<Job>
   archive(sourceId: string): Promise<Source>
   restore(sourceId: string): Promise<Source>
+  updateMetadata(sourceId: string, payload: {
+    description?: string | null
+    tags?: string[]
+    trustLevel?: string | null
+    documentType?: string | null
+    sourceStatus?: string | null
+    authorityLevel?: string | null
+    effectiveDate?: string | null
+    version?: string | null
+    owner?: string | null
+  }): Promise<Source>
   upload(file: File, collectionId?: string): Promise<Source>
   ingestUrl(payload: { url: string; title?: string; collectionId?: string }): Promise<Source>
   ingestText(payload: { title: string; content: string; sourceType?: 'txt' | 'transcript'; collectionId?: string }): Promise<Source>
+}
+
+export interface INoteService {
+  list(params?: { sourceId?: string; pageId?: string; collectionId?: string; search?: string; limit?: number }): Promise<Note[]>
+  create(payload: {
+    title: string
+    body?: string
+    scope?: 'private' | 'collection' | 'workspace' | string
+    collectionId?: string | null
+    tags?: string[]
+    anchors?: Array<Record<string, unknown>>
+    metadataJson?: Record<string, unknown>
+  }): Promise<Note>
+  update(id: string, payload: { title?: string; body?: string; tags?: string[] }): Promise<Note>
+  archive(id: string): Promise<Note>
+  createPageDraft(id: string): Promise<{ success: boolean; pageId: string; pageSlug: string }>
+  createReviewItem(id: string): Promise<{ success: boolean; reviewItemId: string }>
 }
 
 export interface ICollectionService {
@@ -40,6 +69,7 @@ export interface ICollectionService {
   delete(id: string): Promise<{ success: boolean }>
   assignSource(sourceId: string, collectionId?: string | null): Promise<{ sourceId: string; collectionId?: string | null }>
   assignPage(pageId: string, collectionId?: string | null): Promise<{ pageId: string; collectionId?: string | null }>
+  setMemberships(collectionId: string, memberships: Array<{ userId: string; role: string }>): Promise<{ collectionId: string; memberships: Array<{ userId: string; role: string }> }>
 }
 
 export interface IPageService {
@@ -106,6 +136,7 @@ export interface IDiagramService {
 export interface IReviewService {
   getQueue(params?: { severity?: SeverityLevel; issueType?: ReviewIssueType; page?: number; pageSize?: number }): Promise<PaginatedResponse<ReviewItem>>
   getItem(id: string): Promise<ReviewItem>
+  addComment(id: string, comment: string): Promise<{ id: string; reviewItemId: string; actor: string; comment: string; createdAt: string }>
   approve(id: string, comment?: string): Promise<{ success: boolean; page?: Page }>
   reject(id: string, reason: string): Promise<{ success: boolean }>
   merge(id: string, payload?: { targetPageId?: string; comment?: string }): Promise<{ success: boolean; mergedPage?: Page; archivedPage?: Page; targetPageId?: string }>
@@ -113,8 +144,32 @@ export interface IReviewService {
   requestRebuild(id: string): Promise<{ jobId: string }>
 }
 
+export interface ISkillService {
+  list(): Promise<SkillPackage[]>
+  get(id: string): Promise<SkillPackage>
+  addComment(id: string, comment: string): Promise<SkillPackage>
+  submitReview(id: string, comment?: string): Promise<SkillPackage>
+  approve(id: string, comment?: string): Promise<SkillPackage>
+  release(id: string, comment?: string): Promise<SkillPackage>
+}
+
+export interface IAdminService {
+  listUsers(): Promise<ManagedUser[]>
+  createUser(payload: { email: string; name: string; role: string; password: string; departmentId?: string | null; isActive?: boolean }): Promise<ManagedUser>
+  updateUser(userId: string, payload: { email?: string; name?: string; role?: string; departmentId?: string | null; isActive?: boolean }): Promise<ManagedUser>
+  setUserPassword(userId: string, password: string): Promise<{ success: boolean; user: ManagedUser }>
+  listDepartments(): Promise<Department[]>
+  createDepartment(payload: { name: string; description?: string }): Promise<Department>
+  updateDepartment(departmentId: string, payload: { name?: string; description?: string }): Promise<Department>
+  listRoles(): Promise<AdminRole[]>
+}
+
 export interface IQueryService {
-  ask(question: string, sessionId?: string | null): Promise<AskResponse>
+  ask(
+    question: string,
+    sessionId?: string | null,
+    scope?: { sourceId?: string | null; collectionId?: string | null; pageId?: string | null },
+  ): Promise<AskResponse>
   listChatSessions(limit?: number): Promise<ChatSession[]>
   getChatSession(sessionId: string): Promise<ChatSessionDetail>
   deleteChatSession(sessionId: string): Promise<{ success: boolean }>

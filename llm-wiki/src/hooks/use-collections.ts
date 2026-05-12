@@ -44,3 +44,14 @@ export function useAssignPageCollection() {
   })
 }
 
+export function useSetCollectionMemberships() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ collectionId, memberships }: { collectionId: string; memberships: Array<{ userId: string; role: string }> }) =>
+      collectionService.setMemberships(collectionId, memberships),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['collections'] })
+      qc.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
+}

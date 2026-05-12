@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.ingest import build_tags, summarize_text
 from app.models import Claim, GlossaryTerm, Page, PageClaimLink, PageEntityLink, PageLink, PageSourceLink, PageVersion, Source, SourceChunk, TimelineEvent
 from app.services.audit import create_audit_log, list_audit_logs
+from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
 
 
 class PageEditConflict(Exception):
@@ -217,8 +218,10 @@ def serialize_page(
     }
 
 
-def list_pages(db: Session, page: int = 1, page_size: int = 20, status: str | None = None, page_type: str | None = None, search: str | None = None, sort: str | None = None, collection_id: str | None = None) -> dict:
+def list_pages(db: Session, page: int = 1, page_size: int = 20, status: str | None = None, page_type: str | None = None, search: str | None = None, sort: str | None = None, collection_id: str | None = None, actor=None) -> dict:
     query = db.query(Page)
+    if actor is not None:
+        query = apply_collection_scope_filter(query, Page, actor)
     if status:
         query = query.filter(Page.status == status)
     if page_type:
@@ -265,9 +268,11 @@ def list_pages(db: Session, page: int = 1, page_size: int = 20, status: str | No
     return {"data": data, "total": len(items), "page": page, "pageSize": page_size, "hasMore": start + page_size < len(items)}
 
 
-def get_page_by_slug(db: Session, slug: str) -> dict | None:
+def get_page_by_slug(db: Session, slug: str, actor=None) -> dict | None:
     page = db.query(Page).filter(Page.slug == slug).first()
     if not page:
+        return None
+    if actor is not None and not can_access_collection_id(actor, page.collection_id):
         return None
     source_map = _page_source_map(db, [page.id])
     related_source_ids = source_map.get(page.id, [])
@@ -287,8 +292,11 @@ def get_page_by_slug(db: Session, slug: str) -> dict | None:
     )
 
 
-def get_page_by_id(db: Session, page_id: str) -> Page | None:
-    return db.query(Page).filter(Page.id == page_id).first()
+def get_page_by_id(db: Session, page_id: str, actor=None) -> Page | None:
+    page = db.query(Page).filter(Page.id == page_id).first()
+    if page and actor is not None and not can_access_collection_id(actor, page.collection_id):
+        return None
+    return page
 
 
 def get_page_versions(db: Session, page_id: str) -> list[dict]:

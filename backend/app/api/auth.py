@@ -26,12 +26,23 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     token, _session = create_session(db, user)
-    return {"token": token, "user": serialize_user(user)}
+    return {"token": token, "user": serialize_user(db, user)}
 
 
 @router.get("/me", response_model=UserOut)
 async def me(actor: Actor = Depends(require_authenticated_actor)):
-    return {"id": actor.id or "", "email": actor.email or "", "name": actor.name, "role": actor.role}
+    return {
+        "id": actor.id or "",
+        "email": actor.email or "",
+        "name": actor.name,
+        "role": actor.role,
+        "departmentId": actor.department_id,
+        "departmentName": actor.department_name,
+        "permissions": list(actor.permissions),
+        "scopeMode": actor.collection_scope_mode,
+        "accessibleCollectionIds": list(actor.accessible_collection_ids),
+        "collectionMemberships": list(actor.collection_memberships),
+    }
 
 
 @router.post("/logout")
@@ -40,4 +51,3 @@ async def logout(authorization: str | None = Header(default=None, alias="Authori
     if token:
         revoke_token(db, token)
     return {"success": True}
-

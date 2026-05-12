@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.db.database import SessionLocal
@@ -267,5 +268,7 @@ def load_runtime_snapshot(db: Session | None = None) -> RuntimeConfigSnapshot:
     session = SessionLocal()
     try:
         return runtime_snapshot_from_record(ensure_runtime_config(session))
+    except SQLAlchemyError:
+        return _default_snapshot()
     finally:
         session.close()

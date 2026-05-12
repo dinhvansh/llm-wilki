@@ -29,6 +29,17 @@ export function useApproveReview() {
   })
 }
 
+export function useAddReviewComment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, comment }: { id: string; comment: string }) => reviewService.addComment(id, comment),
+    onSuccess: (_result, variables) => {
+      qc.invalidateQueries({ queryKey: ['review-queue'] })
+      qc.invalidateQueries({ queryKey: ['review-item', variables.id] })
+    },
+  })
+}
+
 export function useRejectReview() {
   const qc = useQueryClient()
   return useMutation({

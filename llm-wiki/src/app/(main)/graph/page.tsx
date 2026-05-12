@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import type { Edge, Node, NodeProps, NodeTypes } from '@xyflow/react'
 import {
   ReactFlow,
@@ -18,6 +19,7 @@ import { EmptyState } from '@/components/data-display/empty-state'
 import { ErrorState } from '@/components/data-display/error-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { StatusBadge } from '@/components/data-display/status-badge'
+import { EvidenceCard } from '@/components/evidence/evidence-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { useGraph } from '@/hooks/use-graph'
 import { useCollections } from '@/hooks/use-collections'
@@ -722,6 +724,32 @@ export default function KnowledgeGraphPage() {
 
               {detail.description && <p className="text-sm text-muted-foreground">{detail.description}</p>}
 
+              <EvidenceCard
+                title={detail.label}
+                subtitle={detail.type === 'page' ? 'Graph page node' : 'Graph entity node'}
+                snippet={detail.description || `Graph node with ${detail.metrics.degree} direct connections.`}
+                type={detail.pageType || detail.entityType || detail.type}
+                confidence={detail.metrics.hubScore ? Math.min(detail.metrics.hubScore, 100) : undefined}
+                meta={[
+                  `Degree: ${detail.metrics.degree}`,
+                  `Backlinks: ${detail.metrics.backlinkCount}`,
+                  `Sources: ${detail.metrics.sourceCount ?? detail.sourceIds.length}`,
+                  `Citations: ${detail.metrics.citationCount ?? 0}`,
+                ]}
+                actions={[
+                  ...(detail.url && detail.type === 'page' ? [{ label: 'Open page', href: detail.url, variant: 'primary' as const }] : []),
+                  ...(detail.type === 'page' && detail.url ? [{
+                    label: 'Ask this page',
+                    href: `/ask?pageId=${encodeURIComponent(detail.id)}&pageTitle=${encodeURIComponent(detail.label)}&pageSummary=${encodeURIComponent(detail.description ?? '')}`,
+                  }] : []),
+                  ...(detail.sourceIds[0] ? [{ label: 'Inspect source', href: `/sources/${detail.sourceIds[0]}` }] : []),
+                  ...(detail.sourceIds[0] ? [{
+                    label: 'Ask linked source',
+                    href: `/ask?sourceId=${encodeURIComponent(detail.sourceIds[0])}&sourceTitle=${encodeURIComponent(detail.label)}`,
+                  }] : []),
+                ]}
+              />
+
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-border bg-background p-3">
                   <p className="text-xs text-muted-foreground">Degree</p>
@@ -764,7 +792,11 @@ export default function KnowledgeGraphPage() {
                 <div>
                   <p className="text-sm font-semibold">Source Links</p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {detail.sourceIds.map(sourceId => <span key={sourceId} className="rounded-full bg-muted px-2 py-1 text-xs">{sourceId}</span>)}
+                    {detail.sourceIds.map(sourceId => (
+                      <Link key={sourceId} href={`/sources/${sourceId}`} className="rounded-full bg-muted px-2 py-1 text-xs hover:bg-accent">
+                        {sourceId}
+                      </Link>
+                    ))}
                   </div>
                 </div>
               )}
@@ -783,15 +815,31 @@ export default function KnowledgeGraphPage() {
                   </button>
                 </div>
                 <div className="mb-3 flex flex-wrap gap-2">
-                  {detail.url && (
-                    <a href={detail.url} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">
+                  {detail.url && detail.type === 'page' && (
+                    <Link href={detail.url} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">
                       Open page
-                    </a>
+                    </Link>
+                  )}
+                  {detail.type === 'page' && detail.url && (
+                    <Link
+                      href={`/ask?pageId=${encodeURIComponent(detail.id)}&pageTitle=${encodeURIComponent(detail.label)}&pageSummary=${encodeURIComponent(detail.description ?? '')}`}
+                      className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent"
+                    >
+                      Ask this page
+                    </Link>
                   )}
                   {detail.sourceIds[0] && (
-                    <a href={`/sources/${detail.sourceIds[0]}`} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">
+                    <Link href={`/sources/${detail.sourceIds[0]}`} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">
                       Inspect source
-                    </a>
+                    </Link>
+                  )}
+                  {detail.sourceIds[0] && (
+                    <Link
+                      href={`/ask?sourceId=${encodeURIComponent(detail.sourceIds[0])}&sourceTitle=${encodeURIComponent(detail.label)}`}
+                      className="rounded-md border border-input px-2 py-1 text-xs hover:bg-accent"
+                    >
+                      Ask linked source
+                    </Link>
                   )}
                   <button
                     onClick={() => {

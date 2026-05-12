@@ -11,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.models import AuthSession, User
+from app.services.permissions import get_collection_scope, permissions_for_role
 
 ROLE_ORDER = {"reader": 0, "editor": 1, "reviewer": 2, "admin": 3}
 DEV_ADMIN_EMAIL = "admin@local.test"
@@ -23,7 +24,13 @@ class Actor:
     name: str
     role: str
     email: str | None = None
+    department_id: str | None = None
+    department_name: str | None = None
     authenticated: bool = False
+    permissions: tuple[str, ...] = ()
+    collection_scope_mode: str = "all"
+    accessible_collection_ids: tuple[str, ...] = ()
+    collection_memberships: tuple[dict, ...] = ()
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
@@ -47,8 +54,20 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def serialize_user(user: User) -> dict:
-    return {"id": user.id, "email": user.email, "name": user.name, "role": user.role}
+def serialize_user(db: Session, user: User) -> dict:
+    scope = get_collection_scope(db, user)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "departmentId": user.department_id,
+        "departmentName": user.department.name if getattr(user, "department", None) else None,
+        "permissions": sorted(permissions_for_role(user.role)),
+        "scopeMode": scope.mode,
+        "accessibleCollectionIds": scope.collection_ids,
+        "collectionMemberships": scope.memberships,
+    }
 
 
 def ensure_dev_admin_user(db: Session) -> User:
@@ -126,11 +145,41 @@ def revoke_token(db: Session, token: str) -> bool:
 
 
 def actor_from_user(user: User) -> Actor:
-    return Actor(id=user.id, name=user.name, role=user.role, email=user.email, authenticated=True)
+    raise RuntimeError("actor_from_user now requires a database session; call build_actor instead")
+
+
+def build_actor(db: Session, user: User) -> Actor:
+    scope = get_collection_scope(db, user)
+    permissions = tuple(sorted(permissions_for_role(user.role)))
+    return Actor(
+        id=user.id,
+        name=user.name,
+        role=user.role,
+        email=user.email,
+        department_id=user.department_id,
+        department_name=user.department.name if getattr(user, "department", None) else None,
+        authenticated=True,
+        permissions=permissions,
+        collection_scope_mode=scope.mode,
+        accessible_collection_ids=tuple(scope.collection_ids),
+        collection_memberships=tuple(scope.memberships),
+    )
 
 
 def actor_metadata(actor: Actor) -> dict:
-    return {"actorUserId": actor.id, "actorName": actor.name, "actorRole": actor.role, "actorEmail": actor.email}
+    return {
+        "actorUserId": actor.id,
+        "actorName": actor.name,
+        "actorRole": actor.role,
+        "actorEmail": actor.email,
+        "actorDepartmentId": actor.department_id,
+        "actorDepartmentName": actor.department_name,
+        "actorPermissions": list(actor.permissions),
+        "actorScopeMode": actor.collection_scope_mode,
+        "actorCollectionIds": list(actor.accessible_collection_ids),
+        "actorCollectionCount": len(actor.accessible_collection_ids),
+        "actorCollectionMemberships": [dict(item) for item in actor.collection_memberships],
+    }
 
 
 def has_role(actor: Actor, allowed_roles: set[str]) -> bool:
@@ -138,4 +187,3 @@ def has_role(actor: Actor, allowed_roles: set[str]) -> bool:
         return True
     required_rank = min(ROLE_ORDER[role] for role in allowed_roles)
     return ROLE_ORDER.get(actor.role, -1) >= required_rank
-

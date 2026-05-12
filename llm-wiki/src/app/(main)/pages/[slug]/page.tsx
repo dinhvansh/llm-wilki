@@ -7,6 +7,8 @@ import { StatusBadge } from '@/components/data-display/status-badge'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { MarkdownRenderer } from '@/components/data-display/markdown-renderer'
+import { EvidenceCard } from '@/components/evidence/evidence-card'
+import { EvidenceDrawer } from '@/components/evidence/evidence-drawer'
 import { formatDate, formatDateTime, cn } from '@/lib/utils'
 import { usePage, usePageAudit, usePageVersions, usePublishPage, useUnpublishPage, useUpdatePage } from '@/hooks/use-pages'
 import { useSources } from '@/hooks/use-sources'
@@ -14,6 +16,7 @@ import { usePages } from '@/hooks/use-pages'
 import { useAssignPageCollection, useCollections } from '@/hooks/use-collections'
 import { useAssessDiagramPage, useDiagrams, useGenerateDiagramFromPage } from '@/hooks/use-diagrams'
 import { useAuth } from '@/providers/auth-provider'
+import type { Page, PageCitation } from '@/lib/types'
 import {
   BookOpen, ChevronLeft, ChevronRight,
   Edit3, History, AlertTriangle, RefreshCw,
@@ -38,6 +41,10 @@ const PAGE_TYPE_LABELS: Record<string, string> = {
   faq: 'FAQs',
 }
 
+function pageCitationAskPrompt(pageTitle: string, claimText: string, sourceTitle: string): string {
+  return `Explain how the source "${sourceTitle}" supports the page "${pageTitle}" claim: ${claimText}`
+}
+
 export default function PageDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
@@ -47,6 +54,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const [pageSearch, setPageSearch] = useState('')
   const [savedView, setSavedView] = useState<SavedView>('all')
   const [mobileEditorPane, setMobileEditorPane] = useState<'edit' | 'preview'>('edit')
+  const [selectedCitation, setSelectedCitation] = useState<PageCitation | null>(null)
+  const [selectedBacklink, setSelectedBacklink] = useState<NonNullable<Page['backlinks']>[number] | null>(null)
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
   const { data: versions } = usePageVersions(page?.id ?? '')
@@ -112,6 +121,39 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
 
   return (
     <div className="flex flex-col h-full">
+      <EvidenceDrawer
+        open={Boolean(selectedCitation)}
+        title={selectedCitation?.sourceTitle ?? 'Citation evidence'}
+        subtitle={selectedCitation?.chunkSectionTitle}
+        snippet={selectedCitation?.claimText}
+        meta={[
+          selectedCitation?.pageNumber ? `Page ${selectedCitation.pageNumber}` : null,
+          selectedCitation?.chunkId ? `Chunk: ${selectedCitation.chunkId}` : null,
+          typeof selectedCitation?.sourceSpanStart === 'number' && typeof selectedCitation?.sourceSpanEnd === 'number'
+            ? `Source span: ${selectedCitation.sourceSpanStart}-${selectedCitation.sourceSpanEnd}`
+            : null,
+          selectedCitation ? `Confidence: ${Math.round(selectedCitation.confidence)}%` : null,
+        ]}
+        actions={selectedCitation ? [
+          { label: 'Open source chunk', href: `/sources/${selectedCitation.sourceId}?chunkId=${selectedCitation.chunkId}`, variant: 'primary' },
+          {
+            label: 'Ask about citation',
+            href: `/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(pageCitationAskPrompt(page.title, selectedCitation.claimText, selectedCitation.sourceTitle))}`,
+          },
+        ] : []}
+        onClose={() => setSelectedCitation(null)}
+      />
+      <EvidenceDrawer
+        open={Boolean(selectedBacklink)}
+        title={selectedBacklink?.title ?? 'Backlink'}
+        subtitle={selectedBacklink?.relationType?.replaceAll('_', ' ')}
+        snippet={selectedBacklink ? `This page links back to ${page.title} as ${selectedBacklink.relationType.replaceAll('_', ' ')}.` : null}
+        actions={selectedBacklink ? [
+          { label: 'Open backlink page', href: `/pages/${selectedBacklink.slug}`, variant: 'primary' },
+          { label: 'Ask about relationship', href: `/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&prompt=${encodeURIComponent(`Explain the relationship between ${page.title} and ${selectedBacklink.title}.`)}` },
+        ] : []}
+        onClose={() => setSelectedBacklink(null)}
+      />
       {/* Page Header */}
       <PageHeader
         title={page.title}
@@ -121,6 +163,13 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
           <div className="flex items-center gap-1.5">
             <StatusBadge status={page.status} type="page" />
             <StatusBadge status={page.pageType} type="pageType" />
+            <Link
+              href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md hover:bg-accent transition-colors"
+            >
+              <BookOpen className="w-4 h-4" />
+              Ask This Page
+            </Link>
             {page.status === 'draft' && (
               <button
                 onClick={() => publishMutation.mutate(page.id)}
@@ -513,14 +562,15 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               </h4>
               <div className="space-y-2">
                 {page.backlinks?.map(backlink => (
-                  <Link
+                  <button
                     key={`${backlink.id}-${backlink.relationType}`}
-                    href={`/pages/${backlink.slug}`}
-                    className="block p-2 rounded-md border border-border hover:border-primary/50 transition-colors"
+                    type="button"
+                    onClick={() => setSelectedBacklink(backlink)}
+                    className="block w-full p-2 rounded-md border border-border text-left hover:border-primary/50 transition-colors"
                   >
                     <div className="text-xs font-medium line-clamp-1">{backlink.title}</div>
                     <div className="mt-1 text-[11px] text-muted-foreground capitalize">{backlink.relationType.replaceAll('_', ' ')}</div>
-                  </Link>
+                  </button>
                 ))}
                 {backlinkCount === 0 && (
                   <p className="text-xs text-muted-foreground">No pages link back here yet.</p>
@@ -535,9 +585,31 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 Citations ({totalCitations})
               </h4>
               <div className="space-y-2">
-                {citations.map(citation => (
-                  <Link
+                {citations.map(citation => {
+                  const askHref = `/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(pageCitationAskPrompt(page.title, citation.claimText, citation.sourceTitle))}`
+                  return (
+                  <EvidenceCard
                     key={citation.id}
+                    index={citation.index}
+                    title={citation.sourceTitle}
+                    subtitle={citation.chunkSectionTitle}
+                    snippet={citation.claimText}
+                    type="page citation"
+                    confidence={citation.confidence}
+                    meta={[
+                      citation.pageNumber ? `Page ${citation.pageNumber}` : null,
+                      typeof citation.sourceSpanStart === 'number' && typeof citation.sourceSpanEnd === 'number' ? `Span ${citation.sourceSpanStart}-${citation.sourceSpanEnd}` : null,
+                    ]}
+                    actions={[
+                      { label: 'Inspect', onClick: () => setSelectedCitation(citation), variant: 'primary' },
+                      { label: 'Open source', href: `/sources/${citation.sourceId}?chunkId=${citation.chunkId}` },
+                      { label: 'Ask', href: askHref },
+                    ]}
+                  />
+                  )
+                  /*
+                  <div key={citation.id} className="space-y-1">
+                  <Link
                     href={`/sources/${citation.sourceId}?chunkId=${citation.chunkId}`}
                     className="block p-2.5 bg-accent/50 rounded-md border border-border/50 hover:border-primary/50 transition-colors"
                   >
@@ -557,7 +629,24 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       {typeof citation.sourceSpanStart === 'number' && typeof citation.sourceSpanEnd === 'number' ? ` · span ${citation.sourceSpanStart}-${citation.sourceSpanEnd}` : ''}
                     </div>
                   </Link>
-                ))}
+                  <div className="mt-1.5 flex flex-wrap gap-2 px-2">
+                    <Link
+                      href={`/sources/${citation.sourceId}?chunkId=${citation.chunkId}`}
+                      className="rounded-full border border-border px-2.5 py-1 text-[11px] hover:border-primary/50 hover:bg-background"
+                    >
+                      Inspect source chunk
+                    </Link>
+                    <Link
+                      href={askHref}
+                      className="rounded-full border border-border px-2.5 py-1 text-[11px] hover:border-primary/50 hover:bg-background"
+                    >
+                      Ask about this citation
+                    </Link>
+                  </div>
+                  </div>
+                  )
+                  */
+                })}
                 {totalCitations === 0 && (
                   <p className="text-xs text-muted-foreground">No citations mapped to claims yet.</p>
                 )}
@@ -586,6 +675,25 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 {relatedSources.length === 0 && (
                   <p className="text-xs text-muted-foreground">No sources linked.</p>
                 )}
+              </div>
+            </div>
+
+            <div className="mb-6 rounded-lg border border-border bg-background p-4">
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ask Next</h4>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  `What source evidence backs ${page.title} most strongly?`,
+                  `What parts of ${page.title} may be stale or need review?`,
+                  `Summarize ${page.title} for a quick handoff.`,
+                ].map(prompt => (
+                  <Link
+                    key={prompt}
+                    href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(prompt)}`}
+                    className="rounded-full border border-border px-3 py-1.5 text-xs hover:border-primary/50 hover:bg-accent"
+                  >
+                    {prompt}
+                  </Link>
+                ))}
               </div>
             </div>
 

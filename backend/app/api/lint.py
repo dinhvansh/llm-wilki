@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.core.identity import require_roles
+from app.core.identity import require_permission
 from app.core.runtime_config import load_runtime_snapshot
 from app.services.auth import Actor
 from app.services.lint import execute_lint_quick_fix, run_lint
@@ -28,6 +28,7 @@ async def get_lint_results(
     pageType: Optional[str] = None,
     collectionId: Optional[str] = None,
     db: Session = Depends(get_db),
+    actor: Actor = Depends(require_permission("lint:read")),
 ):
     runtime = load_runtime_snapshot(db)
     return run_lint(
@@ -44,5 +45,5 @@ async def get_lint_results(
 
 
 @router.post("/lint/actions")
-async def run_lint_action(payload: QuickFixPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def run_lint_action(payload: QuickFixPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
     return execute_lint_quick_fix(db, payload.action, payload.payload, actor=actor.name)

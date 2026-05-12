@@ -122,7 +122,7 @@ def main() -> None:
         extraction_runs = source_service.get_source_extraction_runs(session, "src-semantic")
 
         assert knowledge_units, "Expected knowledge units"
-        assert knowledge_units[0]["unitType"] == "requirement", knowledge_units
+        assert knowledge_units[0]["unitType"] == "rule", knowledge_units
         assert knowledge_units[0]["claimId"] == "clm-semantic", knowledge_units
         assert extraction_runs, "Expected extraction runs"
         run_types = {run["runType"] for run in extraction_runs}

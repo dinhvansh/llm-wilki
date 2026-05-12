@@ -1,4 +1,6 @@
 .claude/
+_tmp_arkon/
+tmp/
 
 # OS / editor
 .DS_Store
@@ -36,6 +38,7 @@ dist/
 # Local uploads / temp artifacts
 backend/uploads/
 backend/app/uploads/
+backend/.local/
 
 # Archives / exports / backups
 *.zip

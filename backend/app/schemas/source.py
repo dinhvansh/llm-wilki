@@ -9,6 +9,7 @@ class SourceOut(BaseModel):
     id: str
     title: str
     sourceType: str
+    documentType: str | None = None
     mimeType: str
     filePath: str | None = None
     url: str | None = None
@@ -24,6 +25,23 @@ class SourceOut(BaseModel):
     description: str | None = None
     tags: list[str]
     collectionId: str | None = None
+    sourceStatus: str | None = None
+    authorityLevel: str | None = None
+    effectiveDate: str | None = None
+    version: str | None = None
+    owner: str | None = None
+
+
+class SourceUpdateIn(BaseModel):
+    description: str | None = None
+    tags: list[str] | None = None
+    trustLevel: str | None = None
+    documentType: str | None = None
+    sourceStatus: str | None = None
+    authorityLevel: str | None = None
+    effectiveDate: str | None = None
+    version: str | None = None
+    owner: str | None = None
 
 
 class CollectionOut(BaseModel):
@@ -34,6 +52,7 @@ class CollectionOut(BaseModel):
     color: str
     sourceCount: int = 0
     pageCount: int = 0
+    memberCount: int = 0
     createdAt: str
     updatedAt: str
 
@@ -51,6 +70,20 @@ class SourceChunkOut(BaseModel):
     spanStart: int
     spanEnd: int
     createdAt: str
+
+
+class SourceArtifactOut(BaseModel):
+    id: str
+    sourceId: str
+    artifactType: str
+    title: str
+    status: str = "available"
+    contentType: str | None = None
+    summary: str | None = None
+    previewText: str | None = None
+    url: str | None = None
+    pageNumber: int | None = None
+    metadataJson: dict | None = None
 
 
 class EntityOut(BaseModel):

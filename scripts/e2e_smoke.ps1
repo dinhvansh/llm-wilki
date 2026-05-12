@@ -1,5 +1,5 @@
 param(
-  [string]$ApiBase = "http://localhost:8000/api",
+  [string]$ApiBase = "http://localhost:18000/api",
   [string]$FrontendBase = "http://localhost:3100"
 )
 
@@ -35,7 +35,7 @@ function Wait-HttpOk($Url, $Name) {
 }
 
 Wait-HttpOk "$FrontendBase" "Frontend"
-Wait-HttpOk "http://localhost:8000/ready" "Backend readiness"
+Wait-HttpOk "http://localhost:18000/ready" "Backend readiness"
 
 $login = Invoke-Json "$ApiBase/auth/login" "POST" @{ email = "admin@local.test"; password = "admin123" }
 $headers = @{ Authorization = "Bearer $($login.token)" }

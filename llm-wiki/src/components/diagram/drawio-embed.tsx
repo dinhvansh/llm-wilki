@@ -14,7 +14,7 @@ interface DrawioEmbedProps {
   className?: string
 }
 
-const DRAWIO_BASE_URL = process.env.NEXT_PUBLIC_DRAWIO_BASE_URL ?? 'http://localhost:8081'
+const DRAWIO_BASE_URL = process.env.NEXT_PUBLIC_DRAWIO_BASE_URL ?? 'http://localhost:18081'
 
 export function DrawioEmbed({ title, xml, onXmlChange, onEditorEvent, className }: DrawioEmbedProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)

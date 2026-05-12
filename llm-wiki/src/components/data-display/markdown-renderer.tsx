@@ -14,7 +14,7 @@ const IMAGE_URL_RE = /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i
 function isRenderableImageUrl(value?: string | null) {
   if (!value) return false
   if (!IMAGE_URL_RE.test(value)) return false
-  return value.includes('/uploads/') || value.startsWith('/uploads/')
+  return value.includes('/uploads/') || value.includes('/backend-uploads/') || value.startsWith('/uploads/')
 }
 
 function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null }) {

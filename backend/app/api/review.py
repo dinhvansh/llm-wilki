@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.core.identity import require_roles
+from app.core.identity import require_permission
 from app.services.auth import Actor, actor_metadata
 from app.services.review import (
     add_review_comment,
@@ -40,12 +40,13 @@ async def get_review_queue(
     severity: Optional[str] = None,
     issueType: Optional[str] = None,
     db: Session = Depends(get_db),
+    actor: Actor = Depends(require_permission("review:read")),
 ):
     return list_review_items(db, page=page, page_size=pageSize, severity=severity, issue_type=issueType)
 
 
 @router.get("/{item_id}")
-async def get_review_item_route(item_id: str, db: Session = Depends(get_db)):
+async def get_review_item_route(item_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:read"))):
     item = get_review_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Review item not found")
@@ -53,7 +54,7 @@ async def get_review_item_route(item_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{item_id}/comments")
-async def add_comment(item_id: str, payload: CommentPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def add_comment(item_id: str, payload: CommentPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:comment"))):
     if not payload.comment.strip():
         raise HTTPException(status_code=400, detail="Comment is required")
     result = add_review_comment(db, item_id, payload.comment, actor=actor.name, actor_metadata=actor_metadata(actor))
@@ -63,7 +64,7 @@ async def add_comment(item_id: str, payload: CommentPayload, db: Session = Depen
 
 
 @router.post("/{item_id}/approve")
-async def approve_item(item_id: str, comment: Optional[str] = None, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reviewer", "admin"))):
+async def approve_item(item_id: str, comment: Optional[str] = None, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:approve"))):
     result = approve_review_item(db, item_id, comment=comment, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not result:
         raise HTTPException(status_code=404, detail="Review item not found")
@@ -71,7 +72,7 @@ async def approve_item(item_id: str, comment: Optional[str] = None, db: Session 
 
 
 @router.post("/{item_id}/reject")
-async def reject_item(item_id: str, payload: RejectPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reviewer", "admin"))):
+async def reject_item(item_id: str, payload: RejectPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:approve"))):
     result = reject_review_item(db, item_id, payload.reason, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not result:
         raise HTTPException(status_code=404, detail="Review item not found")
@@ -79,7 +80,7 @@ async def reject_item(item_id: str, payload: RejectPayload, db: Session = Depend
 
 
 @router.post("/{item_id}/merge")
-async def merge_item(item_id: str, payload: MergePayload, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("reviewer", "admin"))):
+async def merge_item(item_id: str, payload: MergePayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("review:approve"))):
     result = merge_review_item(db, item_id, target_page_id=payload.targetPageId, comment=payload.comment, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not result:
         raise HTTPException(status_code=404, detail="Review item or merge target not found")
@@ -87,7 +88,7 @@ async def merge_item(item_id: str, payload: MergePayload, db: Session = Depends(
 
 
 @router.post("/{item_id}/create-issue-page")
-async def create_issue_page(item_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_roles("editor", "reviewer", "admin"))):
+async def create_issue_page(item_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
     result = create_issue_page_from_review_item(db, item_id)
     if not result:
         raise HTTPException(status_code=404, detail="Review item not found")
