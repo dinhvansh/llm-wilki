@@ -42,9 +42,7 @@ class CreateDiagramPayload(BaseModel):
     entryPoints: list[str] = []
     exitPoints: list[str] = []
     relatedDiagramIds: list[str] = []
-    specJson: dict = {}
     flowDocument: dict = {}
-    drawioXml: str = ""
 
 
 class UpdateDiagramPayload(CreateDiagramPayload):
@@ -55,6 +53,13 @@ class UpdateDiagramPayload(CreateDiagramPayload):
 class GenerateDiagramPayload(BaseModel):
     title: str | None = None
     objective: str | None = None
+
+
+class FlowImportPayload(BaseModel):
+    title: str
+    objective: str = ""
+    source: str
+    format: str = "mermaid"
 
 
 class ReviewPayload(BaseModel):
@@ -128,9 +133,7 @@ async def create_diagram_route(payload: CreateDiagramPayload, db: Session = Depe
         entry_points=payload.entryPoints,
         exit_points=payload.exitPoints,
         related_diagram_ids=payload.relatedDiagramIds,
-        spec_json=payload.specJson,
         flow_document=payload.flowDocument,
-        drawio_xml=payload.drawioXml,
     )
 
 
@@ -162,9 +165,7 @@ async def generate_diagram_from_page_route(
             entry_points=diagram["entryPoints"],
             exit_points=diagram["exitPoints"],
             related_diagram_ids=diagram["relatedDiagramIds"],
-            spec_json=diagram["specJson"],
             flow_document=diagram["flowDocument"],
-            drawio_xml=diagram["drawioXml"],
             change_summary="Customize generated BPM draft",
             expected_version=diagram["currentVersion"],
         )
@@ -199,9 +200,7 @@ async def generate_diagram_from_source_route(
             entry_points=diagram["entryPoints"],
             exit_points=diagram["exitPoints"],
             related_diagram_ids=diagram["relatedDiagramIds"],
-            spec_json=diagram["specJson"],
             flow_document=diagram["flowDocument"],
-            drawio_xml=diagram["drawioXml"],
             change_summary="Customize generated BPM draft",
             expected_version=diagram["currentVersion"],
         )
@@ -225,9 +224,7 @@ async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, d
             entry_points=payload.entryPoints,
             exit_points=payload.exitPoints,
             related_diagram_ids=payload.relatedDiagramIds,
-            spec_json=payload.specJson,
             flow_document=payload.flowDocument,
-            drawio_xml=payload.drawioXml,
             change_summary=payload.changeSummary,
             expected_version=payload.expectedVersion,
         )
@@ -236,6 +233,41 @@ async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, d
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     return diagram
+
+
+@router.post("/import", response_model=DiagramOut)
+async def import_diagram_route(payload: FlowImportPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:write"))):
+    from app.services.diagrams import create_diagram_from_import
+
+    diagram = create_diagram_from_import(
+        db,
+        title=payload.title,
+        objective=payload.objective,
+        source=payload.source,
+        source_format=payload.format,
+        actor=actor.name,
+    )
+    return diagram
+
+
+@router.post("/{diagram_id}/validate")
+async def validate_diagram_route(diagram_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
+    from app.services.diagrams import validate_diagram_flow
+
+    result = validate_diagram_flow(db, diagram_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    return result
+
+
+@router.get("/{diagram_id}/export/{format}")
+async def export_diagram_route(diagram_id: str, format: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("diagram:read"))):
+    from app.services.diagrams import export_diagram_flow
+
+    result = export_diagram_flow(db, diagram_id, format=format)
+    if not result:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    return result
 
 
 @router.post("/{diagram_id}/publish", response_model=DiagramOut)

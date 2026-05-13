@@ -391,8 +391,6 @@ export interface Diagram {
   owner: string
   collectionId?: string | null
   currentVersion: number
-  drawioXml: string
-  specJson: Record<string, unknown>
   flowDocument: FlowDocument
   sourcePageIds: string[]
   sourceIds: string[]
@@ -412,8 +410,6 @@ export interface DiagramVersion {
   id: string
   diagramId: string
   versionNo: number
-  drawioXml: string
-  specJson: Record<string, unknown>
   flowDocument: FlowDocument
   changeSummary: string
   createdAt: string

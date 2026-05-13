@@ -16,11 +16,6 @@ let diagrams: Diagram[] = [
     owner: 'Knowledge Ops',
     collectionId: 'col-003',
     currentVersion: 1,
-    drawioXml: '<mxGraphModel><root /></mxGraphModel>',
-    specJson: {
-      title: 'Document Review Process',
-      actors: [{ id: 'editor', label: 'Editor' }, { id: 'reviewer', label: 'Reviewer' }, { id: 'system', label: 'System' }],
-    },
     flowDocument: emptyFlowDocument('Document Review Process', 'Draft, review, and publish a knowledge page with BPM ownership lanes.', 'Knowledge Ops'),
     sourcePageIds: ['page-004'],
     sourceIds: ['src-003'],
@@ -42,8 +37,6 @@ let versions: DiagramVersion[] = [
     id: 'diagver-001',
     diagramId: 'diag-001',
     versionNo: 1,
-    drawioXml: '<mxGraphModel><root /></mxGraphModel>',
-    specJson: { title: 'Document Review Process' },
     flowDocument: emptyFlowDocument('Document Review Process', 'Draft, review, and publish a knowledge page with BPM ownership lanes.', 'Knowledge Ops'),
     changeSummary: 'Initial diagram draft',
     createdAt: NOW,
@@ -81,9 +74,7 @@ function createLocalDiagram(payload: {
   entryPoints?: string[]
   exitPoints?: string[]
   relatedDiagramIds?: string[]
-  specJson?: Record<string, unknown>
   flowDocument?: Diagram['flowDocument']
-  drawioXml?: string
 }): Diagram {
   const created: Diagram = {
     id: `diag-${Date.now()}`,
@@ -95,8 +86,6 @@ function createLocalDiagram(payload: {
     owner: payload.owner ?? 'Current User',
     collectionId: payload.collectionId ?? null,
     currentVersion: 1,
-    drawioXml: payload.drawioXml ?? '',
-    specJson: payload.specJson ?? {},
     flowDocument: payload.flowDocument ?? emptyFlowDocument(payload.title, payload.objective ?? '', payload.owner ?? 'Current User'),
     sourcePageIds: payload.sourcePageIds ?? [],
     sourceIds: payload.sourceIds ?? [],
@@ -116,8 +105,6 @@ function createLocalDiagram(payload: {
     id: `diagver-${Date.now()}`,
     diagramId: created.id,
     versionNo: 1,
-    drawioXml: created.drawioXml,
-    specJson: created.specJson,
     flowDocument: created.flowDocument,
     changeSummary: 'Initial diagram draft',
     createdAt: created.createdAt,
@@ -184,24 +171,10 @@ export function createMockDiagramService(): IDiagramService {
         title: payload?.title ?? `Generated BPM From Page ${pageId}`,
         objective: payload?.objective ?? 'AI-generated BPM draft from page content.',
         owner: 'Current User',
-        specJson: {
-          title: payload?.title ?? `Generated BPM From Page ${pageId}`,
-          scopeSummary: 'Mock BPM draft generated from page.',
-          actors: [{ id: 'owner', label: 'Current User' }, { id: 'system', label: 'System' }],
-          nodes: [
-            { id: 'start', type: 'start', label: 'Document ready', owner: 'Current User' },
-            { id: 'task-1', type: 'task', label: 'Review extracted process', owner: 'Current User' },
-            { id: 'end', type: 'end', label: 'Draft saved', owner: 'System' },
-          ],
-          edges: [{ from: 'start', to: 'task-1' }, { from: 'task-1', to: 'end' }],
-          openQuestions: ['Confirm actual decision and exception path.'],
-          validation: { isValid: false, warnings: ['Mock diagram needs review before publish.'] },
-        },
         sourcePageIds: [pageId],
         actorLanes: ['Current User', 'System'],
         entryPoints: ['Document ready'],
         exitPoints: ['Draft saved'],
-        drawioXml: '<mxGraphModel><root /></mxGraphModel>',
         flowDocument: emptyFlowDocument(payload?.title ?? `Generated BPM From Page ${pageId}`, payload?.objective ?? 'AI-generated BPM draft from page content.', 'Current User'),
       })
     },
@@ -210,25 +183,19 @@ export function createMockDiagramService(): IDiagramService {
         title: payload?.title ?? `Generated BPM From Source ${sourceId}`,
         objective: payload?.objective ?? 'AI-generated BPM draft from source content.',
         owner: 'Current User',
-        specJson: {
-          title: payload?.title ?? `Generated BPM From Source ${sourceId}`,
-          scopeSummary: 'Mock BPM draft generated from source.',
-          actors: [{ id: 'owner', label: 'Current User' }, { id: 'system', label: 'System' }],
-          nodes: [
-            { id: 'start', type: 'start', label: 'Source ingested', owner: 'System' },
-            { id: 'task-1', type: 'task', label: 'Draft BPM from source', owner: 'Current User' },
-            { id: 'end', type: 'end', label: 'Draft saved', owner: 'System' },
-          ],
-          edges: [{ from: 'start', to: 'task-1' }, { from: 'task-1', to: 'end' }],
-          openQuestions: ['Confirm business owner and review branch.'],
-          validation: { isValid: false, warnings: ['Mock diagram needs review before publish.'] },
-        },
         sourceIds: [sourceId],
         actorLanes: ['Current User', 'System'],
         entryPoints: ['Source ingested'],
         exitPoints: ['Draft saved'],
-        drawioXml: '<mxGraphModel><root /></mxGraphModel>',
         flowDocument: emptyFlowDocument(payload?.title ?? `Generated BPM From Source ${sourceId}`, payload?.objective ?? 'AI-generated BPM draft from source content.', 'Current User'),
+      })
+    },
+    async importFlow(payload) {
+      return createLocalDiagram({
+        title: payload.title,
+        objective: payload.objective ?? '',
+        owner: 'Current User',
+        flowDocument: emptyFlowDocument(payload.title, payload.objective ?? '', 'Current User'),
       })
     },
     async create(payload) {
@@ -245,8 +212,6 @@ export function createMockDiagramService(): IDiagramService {
         objective: payload.objective ?? '',
         owner: payload.owner ?? existing.owner,
         collectionId: payload.collectionId ?? null,
-        drawioXml: payload.drawioXml ?? '',
-        specJson: payload.specJson ?? {},
         flowDocument: payload.flowDocument ?? existing.flowDocument,
         sourcePageIds: payload.sourcePageIds ?? [],
         sourceIds: payload.sourceIds ?? [],
@@ -265,8 +230,6 @@ export function createMockDiagramService(): IDiagramService {
         id: `diagver-${Date.now()}`,
         diagramId,
         versionNo: nextVersion,
-        drawioXml: updated.drawioXml,
-        specJson: updated.specJson,
         flowDocument: updated.flowDocument,
         changeSummary: payload.changeSummary ?? 'Updated diagram',
         createdAt: updated.updatedAt,
@@ -286,7 +249,7 @@ export function createMockDiagramService(): IDiagramService {
       const existing = diagrams.find(entry => entry.id === diagramId)
       if (!existing) throw new Error('Diagram not found')
       existing.status = 'in_review'
-      existing.specJson = { ...existing.specJson, reviewStatus: 'in_review' }
+      existing.flowDocument.metadata.reviewStatus = 'in_review'
       existing.updatedAt = new Date().toISOString()
       return existing
     },
@@ -294,7 +257,8 @@ export function createMockDiagramService(): IDiagramService {
       const existing = diagrams.find(entry => entry.id === diagramId)
       if (!existing) throw new Error('Diagram not found')
       existing.status = 'draft'
-      existing.specJson = { ...existing.specJson, reviewStatus: 'approved', reviewComment: payload?.comment ?? '' }
+      existing.flowDocument.metadata.reviewStatus = 'approved'
+      existing.flowDocument.metadata.reviewNotes = [{ comment: payload?.comment ?? '' }]
       existing.updatedAt = new Date().toISOString()
       return existing
     },
@@ -302,7 +266,8 @@ export function createMockDiagramService(): IDiagramService {
       const existing = diagrams.find(entry => entry.id === diagramId)
       if (!existing) throw new Error('Diagram not found')
       existing.status = 'draft'
-      existing.specJson = { ...existing.specJson, reviewStatus: 'changes_requested', reviewComment: payload?.comment ?? '' }
+      existing.flowDocument.metadata.reviewStatus = 'changes_requested'
+      existing.flowDocument.metadata.reviewNotes = [{ comment: payload?.comment ?? '' }]
       existing.updatedAt = new Date().toISOString()
       return existing
     },
@@ -312,6 +277,22 @@ export function createMockDiagramService(): IDiagramService {
       existing.status = 'draft'
       existing.updatedAt = new Date().toISOString()
       return existing
+    },
+    async validate(diagramId) {
+      const existing = diagrams.find(entry => entry.id === diagramId)
+      if (!existing) throw new Error('Diagram not found')
+      const page = existing.flowDocument.pages[0]
+      const warnings = [
+        ...(page.nodes.some(node => node.type === 'start') ? [] : ['Flow is missing a start node.']),
+        ...(page.nodes.some(node => node.type === 'end') ? [] : ['Flow is missing an end node.']),
+      ]
+      return { isValid: warnings.length === 0, warnings }
+    },
+    async exportFlow(diagramId, format) {
+      const existing = diagrams.find(entry => entry.id === diagramId)
+      if (!existing) throw new Error('Diagram not found')
+      if (format === 'mermaid') return { format, content: 'flowchart TD\n  start --> end' }
+      return { format: 'json', content: existing.flowDocument }
     },
   }
 }

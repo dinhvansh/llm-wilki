@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { GitBranch, History, Plus, Save, Trash2 } from 'lucide-react'
+import { CheckCircle2, Download, GitBranch, History, Plus, Save, Trash2 } from 'lucide-react'
 
 import { ErrorState } from '@/components/data-display/error-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
@@ -19,11 +19,13 @@ import {
   useSubmitDiagramReview,
   useUnpublishDiagram,
   useUpdateDiagram,
+  useValidateDiagram,
 } from '@/hooks/use-diagrams'
 import { useCollections } from '@/hooks/use-collections'
 import { emptyFlowDocument, firstFlowPage, makeFlowNode, updateFirstFlowPage, updateFlowMetadata } from '@/lib/openflow'
 import type { FlowDocument, FlowNode } from '@/lib/types'
 import { formatDateTime } from '@/lib/utils'
+import { diagramService } from '@/services'
 
 function snapshot(value: unknown) {
   return JSON.stringify(value ?? {})
@@ -57,6 +59,7 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
   const approveReviewMutation = useApproveDiagramReview()
   const requestChangesMutation = useRequestDiagramChanges()
   const updateMutation = useUpdateDiagram()
+  const validateMutation = useValidateDiagram()
 
   const [flowDocument, setFlowDocument] = useState<FlowDocument>(() => emptyFlowDocument('Untitled flow'))
   const [title, setTitle] = useState('')
@@ -68,6 +71,7 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState('')
   const [lastSavedAt, setLastSavedAt] = useState('')
   const [saveStatus, setSaveStatus] = useState('Loaded')
+  const [liveValidation, setLiveValidation] = useState<{ isValid: boolean; warnings: string[] } | null>(null)
 
   useEffect(() => {
     if (!diagram) return
@@ -132,9 +136,7 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
           sourceIds: diagram.sourceIds,
           sourcePageIds: diagram.sourcePageIds,
           relatedDiagramIds: diagram.relatedDiagramIds,
-          specJson: diagram.specJson,
           flowDocument: nextDocument,
-          drawioXml: '',
           changeSummary,
           expectedVersion: diagram.currentVersion,
         },
@@ -158,6 +160,14 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveDraft])
+
+  async function copyExport(format: 'json' | 'mermaid') {
+    if (!diagram) return
+    const exported = await diagramService.exportFlow(diagram.id, format)
+    const content = typeof exported.content === 'string' ? exported.content : JSON.stringify(exported.content, null, 2)
+    await navigator.clipboard.writeText(content)
+    setSaveStatus(`${format.toUpperCase()} export copied`)
+  }
 
   if (isLoading) return <LoadingSpinner label="Loading flow..." />
   if (isError) return <ErrorState message={(error as Error)?.message ?? 'Failed to load flow'} onRetry={() => refetch()} />
@@ -223,6 +233,22 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
               <Save className="h-4 w-4" />
               {updateMutation.isPending ? 'Saving...' : 'Save'}
             </button>
+            <button
+              onClick={async () => {
+                const result = await validateMutation.mutateAsync(diagram.id)
+                setLiveValidation(result)
+                setSaveStatus(result.isValid ? 'Flow validation passed' : `${result.warnings.length} validation warning(s)`)
+              }}
+              className="flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Validate
+            </button>
+            <button onClick={() => void copyExport('mermaid')} className="flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent">
+              <Download className="h-4 w-4" />
+              Copy Mermaid
+            </button>
+            <button onClick={() => void copyExport('json')} className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent">Copy JSON</button>
           </div>
         }
       />
@@ -289,6 +315,11 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
                 <GitBranch className="h-4 w-4" />
                 Properties
               </div>
+              {liveValidation ? (
+                <div className={`mb-4 rounded-md border p-3 text-xs ${liveValidation.isValid ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                  {liveValidation.isValid ? 'No structural warnings.' : liveValidation.warnings.join(' ')}
+                </div>
+              ) : null}
               {selectedNode ? (
                 <div className="space-y-3">
                   <label className="block space-y-1 text-xs font-medium text-muted-foreground">

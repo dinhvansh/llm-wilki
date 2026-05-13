@@ -54,11 +54,23 @@ export function createRealDiagramService(): IDiagramService {
         body: JSON.stringify(payload),
       })
     },
+    async importFlow(payload) {
+      return apiRequest<Diagram>('/diagrams/import', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    },
     async update(diagramId, payload) {
       return apiRequest<Diagram>(`/diagrams/${diagramId}/update`, {
         method: 'POST',
         body: JSON.stringify(payload),
       })
+    },
+    async validate(diagramId) {
+      return apiRequest<{ isValid: boolean; warnings: string[] }>(`/diagrams/${diagramId}/validate`, { method: 'POST' })
+    },
+    async exportFlow(diagramId, format) {
+      return apiRequest<{ format: string; content: Diagram['flowDocument'] | string }>(`/diagrams/${diagramId}/export/${format}`)
     },
     async submitReview(diagramId) {
       return apiRequest<Diagram>(`/diagrams/${diagramId}/submit-review`, { method: 'POST' })

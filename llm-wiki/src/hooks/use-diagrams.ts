@@ -60,6 +60,23 @@ export function useCreateDiagram() {
   })
 }
 
+export function useImportDiagram() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: diagramService.importFlow,
+    onSuccess: (diagram) => {
+      qc.invalidateQueries({ queryKey: ['diagrams'] })
+      qc.invalidateQueries({ queryKey: ['diagram', diagram.slug] })
+    },
+  })
+}
+
+export function useValidateDiagram() {
+  return useMutation({
+    mutationFn: (diagramId: string) => diagramService.validate(diagramId),
+  })
+}
+
 export function useGenerateDiagramFromPage() {
   const qc = useQueryClient()
   return useMutation({

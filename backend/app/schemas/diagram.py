@@ -15,8 +15,6 @@ class DiagramOut(BaseModel):
     owner: str
     collectionId: str | None = None
     currentVersion: int
-    drawioXml: str
-    specJson: dict
     flowDocument: dict
     sourcePageIds: list[str]
     sourceIds: list[str]
@@ -36,8 +34,6 @@ class DiagramVersionOut(BaseModel):
     id: str
     diagramId: str
     versionNo: int
-    drawioXml: str
-    specJson: dict
     flowDocument: dict
     changeSummary: str
     createdAt: str

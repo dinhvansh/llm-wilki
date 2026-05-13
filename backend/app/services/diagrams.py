@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from html import escape
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -101,8 +100,6 @@ def serialize_diagram(record: Diagram, db: Session | None = None) -> dict:
         "owner": record.owner,
         "collectionId": record.collection_id,
         "currentVersion": record.current_version,
-        "drawioXml": record.drawio_xml or "",
-        "specJson": record.spec_json or {},
         "flowDocument": flow_document,
         "sourcePageIds": source_page_ids,
         "sourceIds": source_ids,
@@ -124,8 +121,6 @@ def serialize_diagram_version(record: DiagramVersion) -> dict:
         "id": record.id,
         "diagramId": record.diagram_id,
         "versionNo": record.version_no,
-        "drawioXml": record.drawio_xml or "",
-        "specJson": record.spec_json or {},
         "flowDocument": record.flow_document or flow_document_from_spec(record.spec_json or {}, title="", objective="", owner=""),
         "changeSummary": record.change_summary or "",
         "createdAt": _iso(record.created_at),
@@ -369,6 +364,43 @@ def _build_llm_generation(*, title: str, objective: str, text: str, owner: str |
     }
 
 
+def _build_llm_flow_document(*, title: str, objective: str, text: str, owner: str | None, citations: list[dict], source_kind: str) -> dict | None:
+    runtime = load_runtime_snapshot()
+    bpm_profile = runtime.profile_for_task("bpm_generation")
+    if not llm_client.is_enabled(bpm_profile):
+        return None
+
+    system_prompt = (
+        "You generate OpenFlow document JSON for a process canvas. "
+        "Return strict JSON only. "
+        "Required top-level keys: version, engine, family, pages, metadata. "
+        "Use engine='openflowkit', family='flowchart'. "
+        "pages[0] must contain id, name, lanes, nodes, edges, groups, viewport. "
+        "Each node must contain id, type, label, owner, position. "
+        "Each edge must contain id, source, target, type, and optional label. "
+        "Do not invent business logic. Put missing logic in metadata.openQuestions."
+    )
+    user_prompt = (
+        f"Source kind: {source_kind}\n"
+        f"Title: {title}\n"
+        f"Objective: {objective}\n"
+        f"Default owner: {owner or 'Unknown'}\n\n"
+        f"Citations JSON: {citations[:8]}\n\n"
+        "Document excerpt:\n"
+        f"{text[:12000]}"
+    )
+    response = llm_client.complete(bpm_profile, system_prompt, user_prompt)
+    if not response:
+        return None
+    try:
+        payload = json_like_to_dict(response)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not payload.get("pages"):
+        return None
+    return _ensure_flow_document(payload, None, title=title, objective=objective, owner=(owner or "").strip(), source_page_ids=[], source_ids=[])
+
+
 def _validate_generated_spec(spec_json: dict) -> dict:
     warnings: list[str] = []
     nodes = spec_json.get("nodes", [])
@@ -603,58 +635,135 @@ def _flow_exit_points(flow_document: dict) -> list[str]:
     return [str(node.get("label")).strip() for node in page.get("nodes", []) if isinstance(node, dict) and node.get("type") == "end" and str(node.get("label")).strip()]
 
 
-def _style_for_node(node_type: str) -> str:
-    if node_type == "start":
-        return "ellipse;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;"
-    if node_type == "end":
-        return "ellipse;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;"
-    if node_type == "decision":
-        return "rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;"
-    if node_type == "handoff":
-        return "shape=hexagon;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;"
-    return "rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#475569;"
-
-
-def _drawio_xml_from_spec(spec_json: dict) -> str:
-    actors = [actor.get("label") for actor in spec_json.get("actors", []) if isinstance(actor, dict) and actor.get("label")]
-    actor_x = {label: 40 + index * 260 for index, label in enumerate(actors)}
-    nodes = [node for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("id")]
-    node_y: dict[str, int] = {}
-    for index, node in enumerate(nodes):
-        node_y[str(node.get("id"))] = 40 + index * 110
-
-    xml_parts = [
-        '<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">',
-        "<root>",
-        '<mxCell id="0" />',
-        '<mxCell id="1" parent="0" />',
-    ]
-
+def validate_flow_document(flow_document: dict) -> dict:
+    page = _first_flow_page(flow_document)
+    warnings: list[str] = []
+    nodes = [node for node in page.get("nodes", []) if isinstance(node, dict)]
+    edges = [edge for edge in page.get("edges", []) if isinstance(edge, dict)]
+    node_ids = {str(node.get("id")) for node in nodes if node.get("id")}
+    lane_labels = {str(lane.get("label")).strip() for lane in page.get("lanes", []) if isinstance(lane, dict) and str(lane.get("label")).strip()}
+    if not nodes:
+        warnings.append("Flow has no nodes.")
+    if not any(node.get("type") == "start" for node in nodes):
+        warnings.append("Flow is missing a start node.")
+    if not any(node.get("type") == "end" for node in nodes):
+        warnings.append("Flow is missing an end node.")
     for node in nodes:
-        node_id = escape(str(node.get("id")))
-        owner = str(node.get("owner") or (actors[0] if actors else "System"))
-        x = actor_x.get(owner, 40)
-        y = node_y[str(node.get("id"))]
-        label = escape(str(node.get("label") or ""))
-        style = _style_for_node(str(node.get("type") or "task"))
-        xml_parts.append(
-            f'<mxCell id="{node_id}" value="{label}" style="{style}" vertex="1" parent="1"><mxGeometry x="{x}" y="{y}" width="180" height="70" as="geometry" /></mxCell>'
-        )
+        node_id = str(node.get("id") or "")
+        if not str(node.get("label") or "").strip():
+            warnings.append(f"Node `{node_id}` is missing label.")
+        owner = str(node.get("owner") or "").strip()
+        if node.get("type") in {"task", "decision", "handoff"} and not owner:
+            warnings.append(f"Node `{node_id}` is missing owner.")
+        if owner and lane_labels and owner not in lane_labels and owner != "System":
+            warnings.append(f"Node `{node_id}` owner `{owner}` is not declared as a lane.")
+        if node.get("type") == "decision":
+            outgoing = [edge for edge in edges if edge.get("source") == node_id]
+            if len(outgoing) < 2:
+                warnings.append(f"Decision `{node_id}` should have at least two outgoing edges.")
+    for edge in edges:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source not in node_ids or target not in node_ids:
+            warnings.append(f"Edge `{edge.get('id')}` points to a missing node.")
+    return {"isValid": len(warnings) == 0, "warnings": warnings}
 
-    for index, edge in enumerate(spec_json.get("edges", [])):
-        if not isinstance(edge, dict):
-            continue
-        source = escape(str(edge.get("from") or ""))
-        target = escape(str(edge.get("to") or ""))
+
+def flow_document_to_mermaid(flow_document: dict) -> str:
+    page = _first_flow_page(flow_document)
+    lines = ["flowchart TD"]
+    for node in [item for item in page.get("nodes", []) if isinstance(item, dict)]:
+        node_id = re.sub(r"[^A-Za-z0-9_]", "_", str(node.get("id") or "node"))
+        label = str(node.get("label") or node_id).replace('"', "'")
+        node_type = str(node.get("type") or "task")
+        if node_type == "decision":
+            lines.append(f'  {node_id}{{"{label}"}}')
+        elif node_type in {"start", "end"}:
+            lines.append(f'  {node_id}(("{label}"))')
+        else:
+            lines.append(f'  {node_id}["{label}"]')
+    for edge in [item for item in page.get("edges", []) if isinstance(item, dict)]:
+        source = re.sub(r"[^A-Za-z0-9_]", "_", str(edge.get("source") or ""))
+        target = re.sub(r"[^A-Za-z0-9_]", "_", str(edge.get("target") or ""))
         if not source or not target:
             continue
-        label = escape(str(edge.get("label") or ""))
-        xml_parts.append(
-            f'<mxCell id="edge-{index + 1}" value="{label}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="{source}" target="{target}"><mxGeometry relative="1" as="geometry" /></mxCell>'
-        )
+        label = str(edge.get("label") or "").replace('"', "'")
+        connector = f' -- "{label}" --> ' if label else " --> "
+        lines.append(f"  {source}{connector}{target}")
+    return "\n".join(lines)
 
-    xml_parts.append("</root></mxGraphModel>")
-    return "".join(xml_parts)
+
+def flow_document_from_mermaid(source: str, *, title: str, objective: str = "", owner: str = "") -> dict:
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
+    edge_re = re.compile(r"\s*--(?:\s*\"([^\"]*)\"\s*--)?\s*>\s*")
+    node_re = re.compile(
+        r"^\s*([A-Za-z0-9_-]+)\s*(?:\[\"?([^\]\"]+)\"?\]|\(\(\"?([^\)\"]+)\"?\)\)|\{\"?([^}\"]+)\"?\})"
+    )
+
+    def parse_endpoint(value: str) -> dict:
+        endpoint = value.strip().rstrip(";")
+        match = re.match(r"^([A-Za-z0-9_-]+)\s*(.*)$", endpoint)
+        node_id = match.group(1) if match else endpoint
+        shape = match.group(2) if match else ""
+        label = node_id
+        if "[\"" in shape or "[" in shape:
+            label_match = re.search(r"\[\"?([^\]\"]+)\"?\]", shape)
+            label = label_match.group(1) if label_match else node_id
+            node_type = "task"
+        elif "((" in shape:
+            label_match = re.search(r"\(\(\"?([^\)\"]+)\"?\)\)", shape)
+            label = label_match.group(1) if label_match else node_id
+            node_type = "end"
+        elif "{" in shape:
+            label_match = re.search(r"\{\"?([^}\"]+)\"?\}", shape)
+            label = label_match.group(1) if label_match else node_id
+            node_type = "decision"
+        else:
+            node_type = "task"
+        return {"id": node_id, "type": node_type, "label": label, "owner": owner or "System"}
+
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("flowchart") or line.lower().startswith("graph"):
+            continue
+        edge_match = edge_re.search(line)
+        if edge_match:
+            source_node = parse_endpoint(line[: edge_match.start()])
+            target_node = parse_endpoint(line[edge_match.end() :])
+            if source_node["id"] not in nodes or nodes[source_node["id"]].get("type") == "task":
+                nodes[source_node["id"]] = source_node
+            if target_node["id"] not in nodes or nodes[target_node["id"]].get("type") == "task":
+                nodes[target_node["id"]] = target_node
+            edges.append({"id": f"edge-{len(edges) + 1}", "source": source_node["id"], "target": target_node["id"], "label": edge_match.group(1) or "", "type": "smoothstep"})
+            continue
+        node_match = node_re.match(line)
+        if node_match:
+            node_id = node_match.group(1)
+            label = next((group for group in node_match.groups()[1:] if group), node_id)
+            node_type = "decision" if "{" in line else "task"
+            nodes[node_id] = {"id": node_id, "type": node_type, "label": label, "owner": owner or "System"}
+    inbound = {str(edge.get("target")) for edge in edges}
+    outbound = {str(edge.get("source")) for edge in edges}
+    for node_id, node in nodes.items():
+        if node["type"] == "task" and node_id not in inbound:
+            node["type"] = "start"
+        if node["type"] == "task" and node_id not in outbound:
+            node["type"] = "end"
+    ordered_nodes = []
+    for index, node in enumerate(nodes.values()):
+        ordered_nodes.append({**node, "position": {"x": 100 + (index % 3) * 260, "y": 120 + index * 110}, "size": {"width": 220, "height": 72}})
+    spec = {
+        "actors": [{"id": _actor_id(owner or "System"), "label": owner or "System"}],
+        "nodes": [{"id": node["id"], "type": node["type"], "label": node["label"], "owner": node.get("owner")} for node in ordered_nodes],
+        "edges": [{"from": edge["source"], "to": edge["target"], "label": edge.get("label", "")} for edge in edges],
+        "reviewStatus": "needs_review",
+    }
+    document = flow_document_from_spec(spec, title=title, objective=objective, owner=owner or "System")
+    document["pages"][0]["nodes"] = ordered_nodes
+    document["pages"][0]["edges"] = edges
+    document["metadata"]["validation"] = validate_flow_document(document)
+    return document
 
 
 def _ensure_traceability_fields(spec_json: dict) -> dict:
@@ -857,6 +966,14 @@ def _create_generated_diagram(
     text: str,
     citations: list[dict],
 ) -> dict:
+    llm_flow_document = _build_llm_flow_document(
+        title=title,
+        objective=objective,
+        text=text,
+        owner=owner,
+        citations=citations,
+        source_kind=source_kind,
+    )
     llm_spec = _build_llm_generation(
         title=title,
         objective=objective,
@@ -882,7 +999,7 @@ def _create_generated_diagram(
     actor_lanes = [actor_item.get("label") for actor_item in spec_json.get("actors", []) if isinstance(actor_item, dict) and actor_item.get("label")]
     entry_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "start"]
     exit_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "end"]
-    flow_document = flow_document_from_spec(
+    flow_document = llm_flow_document or flow_document_from_spec(
         spec_json,
         title=title,
         objective=objective,
@@ -890,6 +1007,9 @@ def _create_generated_diagram(
         source_page_ids=source_page_ids,
         source_ids=source_ids,
     )
+    flow_document["metadata"]["sourcePageIds"] = source_page_ids
+    flow_document["metadata"]["sourceIds"] = source_ids
+    flow_document["metadata"]["validation"] = validate_flow_document(flow_document)
     return create_diagram(
         db,
         title=title,
@@ -1036,6 +1156,44 @@ def get_diagram_audit_logs(db: Session, diagram_id: str, limit: int = 50) -> lis
     return list_audit_logs(db, object_type="diagram", object_id=diagram_id, limit=limit)
 
 
+def validate_diagram_flow(db: Session, diagram_id: str) -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    flow_document = _ensure_flow_document(record.flow_document or {}, record.spec_json or {}, title=record.title, objective=record.objective or "", owner=record.owner, source_page_ids=record.source_page_ids or [], source_ids=record.source_ids or [])
+    return validate_flow_document(flow_document)
+
+
+def export_diagram_flow(db: Session, diagram_id: str, *, format: str = "json") -> dict | None:
+    record = get_diagram_by_id(db, diagram_id)
+    if not record:
+        return None
+    flow_document = _ensure_flow_document(record.flow_document or {}, record.spec_json or {}, title=record.title, objective=record.objective or "", owner=record.owner, source_page_ids=record.source_page_ids or [], source_ids=record.source_ids or [])
+    normalized = format.strip().lower()
+    if normalized == "mermaid":
+        return {"format": "mermaid", "content": flow_document_to_mermaid(flow_document)}
+    return {"format": "json", "content": flow_document}
+
+
+def create_diagram_from_import(db: Session, *, title: str, objective: str, source: str, source_format: str, actor: str) -> dict:
+    normalized = source_format.strip().lower()
+    if normalized == "mermaid":
+        flow_document = flow_document_from_mermaid(source, title=title, objective=objective, owner=actor)
+    else:
+        payload = json_like_to_dict(source)
+        flow_document = _ensure_flow_document(payload, None, title=title, objective=objective, owner=actor)
+    return create_diagram(
+        db,
+        title=title,
+        objective=objective,
+        owner=actor,
+        actor_lanes=_flow_lanes(flow_document),
+        entry_points=_flow_entry_points(flow_document),
+        exit_points=_flow_exit_points(flow_document),
+        flow_document=flow_document,
+    )
+
+
 def create_diagram(
     db: Session,
     *,
@@ -1051,7 +1209,6 @@ def create_diagram(
     related_diagram_ids: list[str] | None = None,
     spec_json: dict | None = None,
     flow_document: dict | None = None,
-    drawio_xml: str = "",
 ) -> dict:
     now = datetime.now(timezone.utc)
     effective_flow_document = _ensure_flow_document(
@@ -1074,7 +1231,7 @@ def create_diagram(
         owner=owner,
         collection_id=collection_id,
         current_version=1,
-        drawio_xml=drawio_xml or "",
+        drawio_xml="",
         spec_json=effective_spec_json,
         flow_document=effective_flow_document,
         source_page_ids=source_page_ids or [],
@@ -1093,7 +1250,7 @@ def create_diagram(
             id=f"diagver-{uuid4().hex[:8]}",
             diagram_id=record.id,
             version_no=1,
-            drawio_xml=record.drawio_xml,
+            drawio_xml="",
             spec_json=record.spec_json,
             flow_document=record.flow_document,
             change_summary="Initial diagram draft",
@@ -1135,8 +1292,7 @@ def update_diagram(
     entry_points: list[str],
     exit_points: list[str],
     related_diagram_ids: list[str],
-    spec_json: dict,
-    drawio_xml: str = "",
+    spec_json: dict | None = None,
     flow_document: dict | None = None,
     change_summary: str | None = None,
     expected_version: int | None = None,
@@ -1169,7 +1325,7 @@ def update_diagram(
     )
     record.flow_document = effective_flow_document
     record.spec_json = spec_from_flow_document(effective_flow_document)
-    record.drawio_xml = drawio_xml or ""
+    record.drawio_xml = ""
     record.updated_at = now
     record.current_version += 1
     db.add(
@@ -1177,7 +1333,7 @@ def update_diagram(
             id=f"diagver-{uuid4().hex[:8]}",
             diagram_id=record.id,
             version_no=record.current_version,
-            drawio_xml=record.drawio_xml,
+            drawio_xml="",
             spec_json=record.spec_json,
             flow_document=record.flow_document,
             change_summary=(change_summary or "Updated diagram").strip()[:255],

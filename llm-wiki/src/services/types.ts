@@ -116,9 +116,7 @@ export interface IDiagramService {
     entryPoints?: string[]
     exitPoints?: string[]
     relatedDiagramIds?: string[]
-    specJson?: Record<string, unknown>
     flowDocument?: FlowDocument
-    drawioXml?: string
   }): Promise<Diagram>
   update(diagramId: string, payload: {
     title: string
@@ -131,12 +129,13 @@ export interface IDiagramService {
     entryPoints?: string[]
     exitPoints?: string[]
     relatedDiagramIds?: string[]
-    specJson?: Record<string, unknown>
     flowDocument?: FlowDocument
-    drawioXml?: string
     changeSummary?: string
     expectedVersion?: number
   }): Promise<Diagram>
+  importFlow(payload: { title: string; objective?: string; source: string; format: 'json' | 'mermaid' | string }): Promise<Diagram>
+  validate(diagramId: string): Promise<{ isValid: boolean; warnings: string[] }>
+  exportFlow(diagramId: string, format: 'json' | 'mermaid' | string): Promise<{ format: string; content: FlowDocument | string }>
   submitReview(diagramId: string): Promise<Diagram>
   approveReview(diagramId: string, payload?: { comment?: string }): Promise<Diagram>
   requestChanges(diagramId: string, payload?: { comment?: string }): Promise<Diagram>

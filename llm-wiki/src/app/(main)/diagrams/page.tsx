@@ -2,6 +2,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { GitBranch, Plus, Search } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 
 import { EmptyState } from '@/components/data-display/empty-state'
 import { ErrorState } from '@/components/data-display/error-state'
@@ -10,15 +11,19 @@ import { StatusBadge } from '@/components/data-display/status-badge'
 import { PageHeader } from '@/components/layout/page-header'
 import { Input } from '@/components/ui/input'
 import { useCollections } from '@/hooks/use-collections'
-import { useCreateDiagram, useDiagrams } from '@/hooks/use-diagrams'
+import { useCreateDiagram, useDiagrams, useImportDiagram } from '@/hooks/use-diagrams'
 import { emptyFlowDocument } from '@/lib/openflow'
 import { formatRelativeTime } from '@/lib/utils'
 
 export default function DiagramsPage() {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [collectionFilter, setCollectionFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
+  const [newObjective, setNewObjective] = useState('New OpenFlow process draft')
+  const [importMode, setImportMode] = useState<'blank' | 'mermaid' | 'json'>('blank')
+  const [importSource, setImportSource] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const { data, isLoading, isError, error, refetch } = useDiagrams({
     search: search || undefined,
@@ -27,6 +32,7 @@ export default function DiagramsPage() {
   })
   const { data: collections } = useCollections()
   const createMutation = useCreateDiagram()
+  const importMutation = useImportDiagram()
 
   const diagrams = data?.data ?? []
 
@@ -39,47 +45,90 @@ export default function DiagramsPage() {
           <button
             onClick={() => {
               setNewTitle('')
+              setNewObjective('New OpenFlow process draft')
+              setImportMode('blank')
+              setImportSource('')
               setShowCreate(true)
             }}
-            disabled={createMutation.isPending}
+            disabled={createMutation.isPending || importMutation.isPending}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
-            {createMutation.isPending ? 'Creating...' : 'New Flow'}
+            {createMutation.isPending || importMutation.isPending ? 'Creating...' : 'New Flow'}
           </button>
         }
       />
 
       <div className="p-6 space-y-4">
         {showCreate ? (
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {(['blank', 'mermaid', 'json'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setImportMode(mode)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium ${importMode === mode ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background hover:bg-accent'}`}
+                >
+                  {mode === 'blank' ? 'Blank canvas' : `Import ${mode}`}
+                </button>
+              ))}
+            </div>
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
               <Input value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="Flow title" />
+              <Input value={newObjective} onChange={event => setNewObjective(event.target.value)} placeholder="Objective" />
+            </div>
+            {importMode !== 'blank' ? (
+              <textarea
+                value={importSource}
+                onChange={event => setImportSource(event.target.value)}
+                rows={7}
+                placeholder={importMode === 'mermaid' ? 'flowchart TD\n  A["Start"] --> B["Review"]\n  B --> C(("Done"))' : '{"version":"1.0","engine":"openflowkit","family":"flowchart","pages":[...]}'}
+                className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground"
+              />
+            ) : null}
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setShowCreate(false)} className="rounded-md border border-input px-4 py-2 text-sm hover:bg-accent">Cancel</button>
               <button
                 onClick={() => {
                   const title = newTitle.trim()
                   if (!title) return
-                  const flowDocument = emptyFlowDocument(title, 'New OpenFlow process draft')
+                  if (importMode !== 'blank') {
+                    if (!importSource.trim()) return
+                    importMutation.mutate({
+                      title,
+                      objective: newObjective,
+                      format: importMode,
+                      source: importSource,
+                    }, {
+                      onSuccess: (diagram) => {
+                        setShowCreate(false)
+                        setNewTitle('')
+                        setImportSource('')
+                        router.push(`/diagrams/${diagram.slug}`)
+                      },
+                    })
+                    return
+                  }
+                  const flowDocument = emptyFlowDocument(title, newObjective)
                   createMutation.mutate({
                     title,
-                    objective: 'New OpenFlow process draft',
+                    objective: newObjective,
                     actorLanes: ['Current User', 'System'],
                     entryPoints: ['Start'],
                     exitPoints: ['Done'],
-                    specJson: { title, actors: [], nodes: [], edges: [] },
                     flowDocument,
-                    drawioXml: '',
                   }, {
-                    onSuccess: () => {
+                    onSuccess: (diagram) => {
                       setShowCreate(false)
                       setNewTitle('')
+                      router.push(`/diagrams/${diagram.slug}`)
                     },
                   })
                 }}
-                disabled={!newTitle.trim() || createMutation.isPending}
+                disabled={!newTitle.trim() || (importMode !== 'blank' && !importSource.trim()) || createMutation.isPending || importMutation.isPending}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
               >
-                Create
+                {importMode === 'blank' ? 'Create canvas' : 'Import flow'}
               </button>
             </div>
           </div>
