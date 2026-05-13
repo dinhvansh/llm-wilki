@@ -2,7 +2,7 @@ import type {
   Source, SourceChunk, SourceSuggestion, Page, PageVersion, Diagram, DiagramVersion, AuditLog, ReviewItem, Job,
   DashboardStats, GraphData, AskResponse, ChatSession, ChatSessionDetail, SearchResult,
   PaginatedResponse, Entity, EntityDetail, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
-  KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, ManagedUser, Department, AdminRole, Note
+  KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, SkillTestResult, ManagedUser, Department, AdminRole, Note
 } from '@/lib/types'
 import type { PageBlock } from '@/lib/page-blocks'
 import type { PageStatus, SourceStatus, SeverityLevel, ReviewIssueType } from '@/lib/constants'
@@ -156,6 +156,42 @@ export interface IReviewService {
 export interface ISkillService {
   list(): Promise<SkillPackage[]>
   get(id: string): Promise<SkillPackage>
+  create(payload: {
+    id?: string
+    name: string
+    version?: string
+    scope?: string
+    status?: string
+    reviewStatus?: string
+    summary?: string
+    description?: string
+    instructions?: string
+    capabilities?: string[]
+    tags?: string[]
+    entryPoints?: string[]
+    owner?: string | null
+    taskProfile?: string
+    metadataJson?: Record<string, unknown>
+    changeComment?: string
+  }): Promise<SkillPackage>
+  update(id: string, payload: {
+    name: string
+    version?: string
+    scope?: string
+    status?: string
+    reviewStatus?: string
+    summary?: string
+    description?: string
+    instructions?: string
+    capabilities?: string[]
+    tags?: string[]
+    entryPoints?: string[]
+    owner?: string | null
+    taskProfile?: string
+    metadataJson?: Record<string, unknown>
+    changeComment?: string
+  }): Promise<SkillPackage>
+  test(id: string, input: string): Promise<{ skill: SkillPackage; result: SkillTestResult }>
   addComment(id: string, comment: string): Promise<SkillPackage>
   submitReview(id: string, comment?: string): Promise<SkillPackage>
   approve(id: string, comment?: string): Promise<SkillPackage>

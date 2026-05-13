@@ -552,6 +552,9 @@ export interface SkillPackage {
   entryPoints: string[]
   owner?: string | null
   reviewStatus: string
+  instructions?: string
+  taskProfile?: string
+  latestTest?: SkillTestResult | null
   reviewHistory?: Array<{
     id: string
     type: string
@@ -560,6 +563,19 @@ export interface SkillPackage {
     createdAt: string
   }>
   metadataJson: Record<string, unknown>
+}
+
+export interface SkillTestResult {
+  id: string
+  input: string
+  output: string
+  taskProfile: string
+  provider: string
+  model: string
+  success: boolean
+  actor: string
+  createdAt: string
+  latencyMs?: number | null
 }
 
 // === Dashboard ===
