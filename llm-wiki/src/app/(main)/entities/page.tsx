@@ -2,7 +2,20 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { Archive, ArrowRightLeft, BadgeCheck, Boxes, FileText, RefreshCw, Save, Search, ShieldAlert, ShieldCheck } from 'lucide-react'
+import {
+  Archive,
+  ArrowRightLeft,
+  BadgeCheck,
+  Boxes,
+  FileText,
+  Pencil,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  X,
+} from 'lucide-react'
 
 import { ErrorState } from '@/components/data-display/error-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
@@ -34,12 +47,15 @@ export default function EntityExplorerPage() {
   const [draftDescription, setDraftDescription] = useState('')
   const [draftAliases, setDraftAliases] = useState('')
   const [mergeTargetId, setMergeTargetId] = useState('')
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [showMergeModal, setShowMergeModal] = useState(false)
 
   const { data, isLoading, isError, error, refetch } = useEntityExplorer({
     search: search || undefined,
     entityType: entityType === 'all' ? undefined : entityType,
     pageSize: 200,
   })
+
   const entities = useMemo(() => {
     const items = data?.data ?? []
     return items.filter(entity => {
@@ -74,6 +90,8 @@ export default function EntityExplorerPage() {
     setDraftDescription(selectedEntity.description)
     setDraftAliases(selectedEntity.aliases.join(', '))
     setMergeTargetId('')
+    setShowEditModal(false)
+    setShowMergeModal(false)
   }, [selectedEntity?.id, selectedEntity])
 
   const linkedPages = selectedEntity?.linkedPages ?? []
@@ -103,7 +121,7 @@ export default function EntityExplorerPage() {
         <section className="space-y-4 rounded-2xl border border-border bg-card p-4">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities..." className="pl-8 h-10" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities..." className="h-10 pl-8" />
           </div>
           <div className="grid gap-2 md:grid-cols-2">
             <select value={entityType} onChange={e => setEntityType(e.target.value as (typeof ENTITY_TYPES)[number])} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
@@ -219,72 +237,84 @@ export default function EntityExplorerPage() {
                       Archive
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setShowEditModal(true)}
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Edit profile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowMergeModal(true)}
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                    Merge
+                  </button>
                 </div>
               </div>
 
               <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="space-y-5">
                   <div className="rounded-xl border border-border bg-background p-4">
-                    <div className="mb-4 text-sm font-semibold">Canonical profile</div>
-                    <div className="grid gap-4 xl:grid-cols-2">
-                      <label className="block">
-                        <div className="mb-1 text-sm font-medium">Name</div>
-                        <Input value={draftName} onChange={e => setDraftName(e.target.value)} />
-                      </label>
-                      <label className="block">
-                        <div className="mb-1 text-sm font-medium">Type</div>
-                        <select value={draftType} onChange={e => setDraftType(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-                          {ENTITY_TYPES.filter(option => option !== 'all').map(option => <option key={option} value={option}>{option}</option>)}
-                        </select>
-                      </label>
-                      <label className="block xl:col-span-2">
-                        <div className="mb-1 text-sm font-medium">Description</div>
-                        <textarea value={draftDescription} onChange={e => setDraftDescription(e.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-                      </label>
-                      <label className="block xl:col-span-2">
-                        <div className="mb-1 text-sm font-medium">Aliases</div>
-                        <Input value={draftAliases} onChange={e => setDraftAliases(e.target.value)} placeholder="Comma-separated aliases" />
-                      </label>
-                    </div>
-                    <div className="mt-4 flex justify-end">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold">Canonical profile</div>
                       <button
                         type="button"
-                        onClick={saveChanges}
-                        disabled={updateEntity.isPending}
-                        className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        onClick={() => setShowEditModal(true)}
+                        className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
                       >
-                        <Save className="h-4 w-4" />
-                        {updateEntity.isPending ? 'Saving...' : 'Save canonical profile'}
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
                       </button>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-xl border border-border/70 bg-card/55 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Name</div>
+                        <div className="mt-2 text-sm font-medium">{selectedEntity.name}</div>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-card/55 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Type</div>
+                        <div className="mt-2 text-sm font-medium capitalize">{selectedEntity.entityType}</div>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-card/55 p-3 md:col-span-2">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Description</div>
+                        <div className="mt-2 text-sm text-muted-foreground">{selectedEntity.description || 'No canonical description yet.'}</div>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-card/55 p-3 md:col-span-2">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Aliases</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {selectedEntity.aliases.length ? selectedEntity.aliases.map(alias => (
+                            <span key={alias} className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{alias}</span>
+                          )) : <span className="text-sm text-muted-foreground">No aliases yet.</span>}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
                   <div className="rounded-xl border border-border bg-background p-4">
-                    <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
-                      <ArrowRightLeft className="h-4 w-4" />
-                      Merge duplicate into another entity
-                    </div>
-                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
-                      <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-                        <option value="">Select merge target</option>
-                        {mergeCandidates.map(candidate => (
-                          <option key={candidate.id} value={candidate.id}>
-                            {candidate.name} · {candidate.entityType} · {candidate.verificationStatus}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-sm font-semibold">
+                        <ArrowRightLeft className="h-4 w-4" />
+                        Merge duplicate into another entity
+                      </div>
                       <button
                         type="button"
-                        onClick={() => mergeEntity.mutate({ entityId: selectedEntity.id, targetEntityId: mergeTargetId })}
-                        disabled={!mergeTargetId || mergeEntity.isPending}
-                        className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                        onClick={() => setShowMergeModal(true)}
+                        className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
                       >
-                        {mergeEntity.isPending ? 'Merging...' : 'Merge now'}
+                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                        Open merge
                       </button>
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Merge moves source/page links and entity references into the target, then marks this record as merged.
+                    <p className="text-xs text-muted-foreground">
+                      Merge moves source links, page links, and entity references into the target, then marks this record as merged.
                     </p>
+                    <div className="mt-3 text-sm text-muted-foreground">
+                      {mergeCandidates.length ? `${mergeCandidates.length} possible merge targets available.` : 'No merge targets available for this entity.'}
+                    </div>
                   </div>
                 </div>
 
@@ -322,6 +352,70 @@ export default function EntityExplorerPage() {
                   </div>
                 </div>
               </div>
+
+              {showEditModal ? (
+                <ModalShell title={`Edit ${selectedEntity.name}`} icon={<Pencil className="h-5 w-5" />} onClose={() => setShowEditModal(false)}>
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <Field label="Name">
+                      <Input value={draftName} onChange={e => setDraftName(e.target.value)} />
+                    </Field>
+                    <Field label="Type">
+                      <select value={draftType} onChange={e => setDraftType(e.target.value)} className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm">
+                        {ENTITY_TYPES.filter(option => option !== 'all').map(option => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Description" className="xl:col-span-2">
+                      <textarea value={draftDescription} onChange={e => setDraftDescription(e.target.value)} rows={6} className="w-full rounded-2xl border border-input bg-background px-4 py-3 text-sm" />
+                    </Field>
+                    <Field label="Aliases" className="xl:col-span-2">
+                      <Input value={draftAliases} onChange={e => setDraftAliases(e.target.value)} placeholder="Comma-separated aliases" />
+                    </Field>
+                  </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button type="button" onClick={() => setShowEditModal(false)} className="inline-flex h-10 items-center justify-center rounded-full border border-border bg-background px-4 text-sm font-medium">Cancel</button>
+                    <button
+                      type="button"
+                      onClick={() => saveChanges().then(() => setShowEditModal(false))}
+                      disabled={updateEntity.isPending}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+                    >
+                      <Save className="h-4 w-4" />
+                      {updateEntity.isPending ? 'Saving...' : 'Save canonical profile'}
+                    </button>
+                  </div>
+                </ModalShell>
+              ) : null}
+
+              {showMergeModal ? (
+                <ModalShell title={`Merge ${selectedEntity.name}`} icon={<ArrowRightLeft className="h-5 w-5" />} onClose={() => setShowMergeModal(false)}>
+                  <div className="space-y-4">
+                    <Field label="Merge target">
+                      <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)} className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm">
+                        <option value="">Select merge target</option>
+                        {mergeCandidates.map(candidate => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {candidate.name} · {candidate.entityType} · {candidate.verificationStatus}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <div className="rounded-2xl border border-border/70 bg-background/60 p-4 text-sm text-muted-foreground">
+                      Merge moves source links, page links, and entity references into the target entity, then marks this entity as merged.
+                    </div>
+                  </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button type="button" onClick={() => setShowMergeModal(false)} className="inline-flex h-10 items-center justify-center rounded-full border border-border bg-background px-4 text-sm font-medium">Cancel</button>
+                    <button
+                      type="button"
+                      onClick={() => mergeEntity.mutate({ entityId: selectedEntity.id, targetEntityId: mergeTargetId }, { onSuccess: () => setShowMergeModal(false) })}
+                      disabled={!mergeTargetId || mergeEntity.isPending}
+                      className="inline-flex h-10 items-center justify-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+                    >
+                      {mergeEntity.isPending ? 'Merging...' : 'Merge now'}
+                    </button>
+                  </div>
+                </ModalShell>
+              ) : null}
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-border bg-background p-10 text-center text-sm text-muted-foreground">
@@ -331,5 +425,33 @@ export default function EntityExplorerPage() {
         </section>
       </div>
     </div>
+  )
+}
+
+function ModalShell({ title, icon, children, onClose }: { title: string; icon: React.ReactNode; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/35 px-4 py-8 backdrop-blur-sm">
+      <div className="surface-panel max-h-[calc(100vh-4rem)] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-border/80 p-6 shadow-[0_30px_90px_rgba(25,20,15,0.22)]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/12 text-primary">{icon}</div>
+            <div className="text-lg font-semibold">{title}</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-6">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children, className = '' }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <label className={`block space-y-2 ${className}`}>
+      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
+      {children}
+    </label>
   )
 }
