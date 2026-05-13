@@ -1,5 +1,5 @@
 'use client'
-import { useDeferredValue, useState, use } from 'react'
+import { useDeferredValue, useEffect, useRef, useState, use } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
@@ -66,6 +66,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const [selectedCitation, setSelectedCitation] = useState<PageCitation | null>(null)
   const [selectedBacklink, setSelectedBacklink] = useState<NonNullable<Page['backlinks']>[number] | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
+  const editorRef = useRef<HTMLTextAreaElement | null>(null)
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
   const { data: versions } = usePageVersions(page?.id ?? '')
@@ -84,6 +85,22 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const router = useRouter()
   const deferredPageSearch = useDeferredValue(pageSearch)
   const canEdit = hasRole('editor', 'reviewer', 'admin')
+
+  useEffect(() => {
+    if (!isEditing || !canEdit || !page?.id) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        if (!updateMutation.isPending) {
+          updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canEdit, editContent, isEditing, page?.id, updateMutation])
 
   if (isLoading) return <LoadingSpinner label="Loading page..." />
   if (isError) return <ErrorState message={(error as Error)?.message ?? 'Failed to load page'} onRetry={() => refetch()} />
@@ -130,6 +147,41 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     } catch {
       setCopyState('idle')
     }
+  }
+
+  const insertIntoEditor = (content: string, options?: { selectInserted?: boolean }) => {
+    if (!canEdit) return
+    if (!isEditing) {
+      setEditContent(page.contentMd)
+      setIsEditing(true)
+    }
+
+    const textarea = editorRef.current
+    if (!textarea) {
+      setEditContent(prev => `${prev.trimEnd()}${content}`)
+      return
+    }
+
+    const start = textarea.selectionStart ?? editContent.length
+    const end = textarea.selectionEnd ?? start
+    const nextContent = `${editContent.slice(0, start)}${content}${editContent.slice(end)}`
+    setEditContent(nextContent)
+
+    window.requestAnimationFrame(() => {
+      const nextCursor = options?.selectInserted ? start + content.length : start + content.length
+      textarea.focus()
+      textarea.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
+
+  const insertCitationIntoDraft = (citation: PageCitation) => {
+    insertIntoEditor(
+      `\n## Evidence note\n\n> ${citation.claimText}\n\nSource: ${citation.sourceTitle}${citation.pageNumber ? ` (page ${citation.pageNumber})` : ''}\nWhy it matters: \n`
+    )
+  }
+
+  const insertSourceIntoDraft = (sourceTitle: string) => {
+    insertIntoEditor(`\n## Source follow-up\n\n- Source: ${sourceTitle}\n- Insight:\n- Open question:\n`)
   }
 
   const statusBanner = page.status === 'stale' ? (
@@ -448,13 +500,16 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                     <button
                       key={block.label}
                       type="button"
-                      onClick={() => setEditContent(prev => `${prev.trimEnd()}${block.content}`)}
+                      onClick={() => insertIntoEditor(block.content)}
                       className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
                     >
                       <Wand2 className="h-3.5 w-3.5 text-primary" />
                       Insert {block.label}
                     </button>
                   ))}
+                </div>
+                <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                  Tip: use the insert chips for structure, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div className={cn('space-y-2', mobileEditorPane === 'preview' && 'hidden lg:block')}>
@@ -463,6 +518,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       Edit
                     </div>
                     <textarea
+                      ref={editorRef}
                       value={editContent}
                       onChange={e => setEditContent(e.target.value)}
                       className="block w-full min-h-[70vh] rounded-2xl border border-input bg-background p-5 text-sm leading-7 resize-y"
@@ -731,6 +787,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       { label: 'Inspect', onClick: () => setSelectedCitation(citation), variant: 'primary' },
                       { label: 'Open source', href: `/sources/${citation.sourceId}?chunkId=${citation.chunkId}` },
                       { label: 'Ask', href: askHref },
+                      ...(isEditing && canEdit ? [{ label: 'Insert in draft', onClick: () => insertCitationIntoDraft(citation) }] : []),
                     ]}
                   />
                   )
@@ -788,16 +845,27 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               </h4>
               <div className="space-y-2">
                 {relatedSources.map(source => (
-                  <Link
-                    key={source.id}
-                    href={`/sources/${source.id}`}
-                    className="block p-2 rounded-md border border-border hover:border-primary/50 transition-colors"
-                  >
-                    <div className="text-xs font-medium line-clamp-1">{source.title}</div>
-                    <div className="flex items-center gap-1 mt-1">
+                  <div key={source.id} className="rounded-md border border-border p-2">
+                    <Link
+                      href={`/sources/${source.id}`}
+                      className="block hover:text-primary transition-colors"
+                    >
+                      <div className="text-xs font-medium line-clamp-1">{source.title}</div>
+                    </Link>
+                    <div className="mt-1 flex items-center gap-1">
                       <StatusBadge status={source.trustLevel} type="trust" />
                     </div>
-                  </Link>
+                    {isEditing && canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => insertSourceIntoDraft(source.title)}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] hover:bg-accent"
+                      >
+                        <Wand2 className="h-3 w-3 text-primary" />
+                        Insert in draft
+                      </button>
+                    )}
+                  </div>
                 ))}
                 {relatedSources.length === 0 && (
                   <p className="text-xs text-muted-foreground">No sources linked.</p>
