@@ -14,11 +14,13 @@ from app.schemas.source import PageOut, PaginatedResponse
 from app.services.auth import Actor, actor_metadata
 from app.services.pages import (
     archive_page,
+    archive_entity,
     PageEditConflict,
     build_editor_insert_helpers,
     bulk_update_pages,
     compose_page,
     create_page_from_chunks,
+    get_entity_detail,
     get_page_by_id,
     get_page_by_slug,
     get_page_audit_logs,
@@ -28,10 +30,14 @@ from app.services.pages import (
     list_glossary_terms,
     list_pages as list_pages_service,
     list_timeline_events,
+    merge_entity_into,
     publish_page,
     restore_page,
+    restore_entity,
     restore_page_version,
+    set_entity_verification,
     unpublish_page,
+    update_entity,
     update_page_content,
 )
 
@@ -76,6 +82,21 @@ class PageFromChunksPayload(BaseModel):
     existingPageId: str | None = None
 
 
+class UpdateEntityPayload(BaseModel):
+    name: str
+    entityType: str
+    description: str = ""
+    aliases: list[str] = []
+
+
+class VerifyEntityPayload(BaseModel):
+    verificationStatus: str
+
+
+class MergeEntityPayload(BaseModel):
+    targetEntityId: str
+
+
 def _safe_page_asset_name(filename: str | None, content_type: str) -> str:
     extension = Path(filename or "").suffix.lower() or ALLOWED_PAGE_ASSET_MIME_TYPES.get(content_type, ".png")
     stem = Path(filename or "clipboard-image").stem
@@ -108,6 +129,65 @@ async def entity_explorer(
     actor: Actor = Depends(require_authenticated_actor),
 ):
     return list_entities(db, page=page, page_size=pageSize, search=search, entity_type=entityType)
+
+
+@router.get("/entity-explorer/{entity_id}")
+async def get_entity_route(entity_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_authenticated_actor)):
+    entity = get_entity_detail(db, entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@router.post("/entity-explorer/{entity_id}/update")
+async def update_entity_route(entity_id: str, payload: UpdateEntityPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    try:
+        entity = update_entity(
+            db,
+            entity_id,
+            name=payload.name,
+            entity_type=payload.entityType,
+            description=payload.description,
+            aliases=payload.aliases,
+            actor=actor.name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@router.post("/entity-explorer/{entity_id}/verify")
+async def verify_entity_route(entity_id: str, payload: VerifyEntityPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    entity = set_entity_verification(db, entity_id, payload.verificationStatus, actor=actor.name)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@router.post("/entity-explorer/{entity_id}/archive")
+async def archive_entity_route(entity_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    entity = archive_entity(db, entity_id, actor=actor.name)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@router.post("/entity-explorer/{entity_id}/restore")
+async def restore_entity_route(entity_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    entity = restore_entity(db, entity_id, actor=actor.name)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@router.post("/entity-explorer/{entity_id}/merge")
+async def merge_entity_route(entity_id: str, payload: MergeEntityPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    entity = merge_entity_into(db, entity_id, payload.targetEntityId, actor=actor.name)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity or merge target not found")
+    return entity
 
 
 @router.get("/timeline-explorer")

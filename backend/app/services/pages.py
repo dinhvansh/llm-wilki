@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.ingest import SENTENCE_RE, build_tags, summarize_text
-from app.models import Claim, GlossaryTerm, Page, PageClaimLink, PageEntityLink, PageLink, PageSourceLink, PageVersion, Source, SourceChunk, TimelineEvent
+from app.models import Claim, GlossaryTerm, KnowledgeUnit, Page, PageClaimLink, PageEntityLink, PageLink, PageSourceLink, PageVersion, Source, SourceChunk, SourceEntityLink, TimelineEvent
 from app.services.audit import create_audit_log, list_audit_logs
 from app.services.page_blocks import markdown_to_blocks, normalize_page_document
 from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
@@ -367,6 +367,7 @@ def list_entities(db: Session, page: int = 1, page_size: int = 50, search: str |
     from app.models import Entity, SourceEntityLink
 
     query = db.query(Entity)
+    query = query.filter(Entity.status != "merged")
     if search:
         term = f"%{search.strip()}%"
         query = query.filter((Entity.name.ilike(term)) | (Entity.description.ilike(term)))
@@ -379,6 +380,8 @@ def list_entities(db: Session, page: int = 1, page_size: int = 50, search: str |
     for entity in paged:
         source_count = db.query(SourceEntityLink).filter(SourceEntityLink.entity_id == entity.id).count()
         page_count = db.query(PageEntityLink).filter(PageEntityLink.entity_id == entity.id).count()
+        source_ids = [row[0] for row in db.query(SourceEntityLink.source_id).filter(SourceEntityLink.entity_id == entity.id).all()]
+        page_ids = [row[0] for row in db.query(PageEntityLink.page_id).filter(PageEntityLink.entity_id == entity.id).all()]
         data.append(
             {
                 "id": entity.id,
@@ -387,12 +390,249 @@ def list_entities(db: Session, page: int = 1, page_size: int = 50, search: str |
                 "description": entity.description,
                 "aliases": entity.aliases or [],
                 "normalizedName": entity.normalized_name,
+                "status": entity.status or "active",
+                "verificationStatus": entity.verification_status or "unverified",
+                "mergedIntoEntityId": entity.merged_into_entity_id,
+                "reviewedAt": _iso(entity.reviewed_at),
+                "reviewedBy": entity.reviewed_by,
                 "createdAt": _iso(entity.created_at),
                 "sourceCount": source_count,
                 "pageCount": page_count,
+                "sourceIds": source_ids,
+                "pageIds": page_ids,
             }
         )
     return {"data": data, "total": len(items), "page": page, "pageSize": page_size, "hasMore": start + page_size < len(items)}
+
+
+def get_entity_detail(db: Session, entity_id: str) -> dict | None:
+    from app.models import Entity
+
+    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if not entity or entity.status == "merged":
+        return None
+
+    source_rows = (
+        db.query(Source.id, Source.title, Source.source_type)
+        .join(SourceEntityLink, SourceEntityLink.source_id == Source.id)
+        .filter(SourceEntityLink.entity_id == entity.id)
+        .order_by(Source.title.asc())
+        .all()
+    )
+    page_rows = (
+        db.query(Page.id, Page.slug, Page.title, Page.status)
+        .join(PageEntityLink, PageEntityLink.page_id == Page.id)
+        .filter(PageEntityLink.entity_id == entity.id)
+        .order_by(Page.title.asc())
+        .all()
+    )
+    duplicate_candidates = (
+        db.query(Entity)
+        .filter(Entity.id != entity.id, Entity.status == "active")
+        .order_by(Entity.name.asc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "id": entity.id,
+        "name": entity.name,
+        "entityType": entity.entity_type,
+        "description": entity.description,
+        "aliases": entity.aliases or [],
+        "normalizedName": entity.normalized_name,
+        "status": entity.status or "active",
+        "verificationStatus": entity.verification_status or "unverified",
+        "mergedIntoEntityId": entity.merged_into_entity_id,
+        "reviewedAt": _iso(entity.reviewed_at),
+        "reviewedBy": entity.reviewed_by,
+        "createdAt": _iso(entity.created_at),
+        "sourceCount": len(source_rows),
+        "pageCount": len(page_rows),
+        "sourceIds": [row.id for row in source_rows],
+        "pageIds": [row.id for row in page_rows],
+        "linkedSources": [{"id": row.id, "title": row.title, "sourceType": row.source_type} for row in source_rows],
+        "linkedPages": [{"id": row.id, "slug": row.slug, "title": row.title, "status": row.status} for row in page_rows],
+        "mergeCandidates": [
+            {
+                "id": candidate.id,
+                "name": candidate.name,
+                "entityType": candidate.entity_type,
+                "verificationStatus": candidate.verification_status or "unverified",
+            }
+            for candidate in duplicate_candidates
+        ],
+    }
+
+
+def update_entity(
+    db: Session,
+    entity_id: str,
+    *,
+    name: str,
+    entity_type: str,
+    description: str,
+    aliases: list[str],
+    actor: str = "Current User",
+) -> dict | None:
+    from app.models import Entity
+
+    entity = db.query(Entity).filter(Entity.id == entity_id, Entity.status != "merged").first()
+    if not entity:
+        return None
+    normalized_name = " ".join(name.strip().lower().split())
+    conflict = db.query(Entity).filter(Entity.id != entity.id, Entity.normalized_name == normalized_name).first()
+    if conflict:
+        raise ValueError("Another entity already uses this canonical name")
+    entity.name = name.strip()
+    entity.entity_type = entity_type.strip()
+    entity.description = description.strip()
+    entity.aliases = sorted({alias.strip() for alias in aliases if alias.strip() and alias.strip().lower() != entity.name.strip().lower()})
+    entity.normalized_name = normalized_name
+    entity.updated_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="update_entity",
+        object_type="entity",
+        object_id=entity.id,
+        actor=actor,
+        summary=f"Updated entity `{entity.name}`",
+        metadata={"entityType": entity.entity_type},
+    )
+    db.commit()
+    return get_entity_detail(db, entity.id)
+
+
+def set_entity_verification(db: Session, entity_id: str, verification_status: str, actor: str = "Current User") -> dict | None:
+    from app.models import Entity
+
+    entity = db.query(Entity).filter(Entity.id == entity_id, Entity.status != "merged").first()
+    if not entity:
+        return None
+    entity.verification_status = verification_status
+    entity.reviewed_at = datetime.now(timezone.utc)
+    entity.reviewed_by = actor
+    entity.updated_at = entity.reviewed_at
+    create_audit_log(
+        db,
+        action="verify_entity",
+        object_type="entity",
+        object_id=entity.id,
+        actor=actor,
+        summary=f"Marked entity `{entity.name}` as {verification_status}",
+        metadata={"verificationStatus": verification_status},
+    )
+    db.commit()
+    return get_entity_detail(db, entity.id)
+
+
+def archive_entity(db: Session, entity_id: str, actor: str = "Current User") -> dict | None:
+    from app.models import Entity
+
+    entity = db.query(Entity).filter(Entity.id == entity_id, Entity.status != "merged").first()
+    if not entity:
+        return None
+    entity.status = "archived"
+    entity.updated_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="archive_entity",
+        object_type="entity",
+        object_id=entity.id,
+        actor=actor,
+        summary=f"Archived entity `{entity.name}`",
+        metadata={},
+    )
+    db.commit()
+    return get_entity_detail(db, entity.id)
+
+
+def restore_entity(db: Session, entity_id: str, actor: str = "Current User") -> dict | None:
+    from app.models import Entity
+
+    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if not entity:
+        return None
+    entity.status = "active"
+    entity.updated_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="restore_entity",
+        object_type="entity",
+        object_id=entity.id,
+        actor=actor,
+        summary=f"Restored entity `{entity.name}`",
+        metadata={},
+    )
+    db.commit()
+    return get_entity_detail(db, entity.id)
+
+
+def merge_entity_into(db: Session, entity_id: str, target_entity_id: str, actor: str = "Current User") -> dict | None:
+    from app.models import Entity
+
+    source_entity = db.query(Entity).filter(Entity.id == entity_id, Entity.status != "merged").first()
+    target_entity = db.query(Entity).filter(Entity.id == target_entity_id, Entity.status == "active").first()
+    if not source_entity or not target_entity or source_entity.id == target_entity.id:
+        return None
+
+    existing_source_links = {row[0] for row in db.query(SourceEntityLink.source_id).filter(SourceEntityLink.entity_id == target_entity.id).all()}
+    for link in db.query(SourceEntityLink).filter(SourceEntityLink.entity_id == source_entity.id).all():
+        if link.source_id in existing_source_links:
+            db.delete(link)
+        else:
+            link.entity_id = target_entity.id
+
+    existing_page_links = {row[0] for row in db.query(PageEntityLink.page_id).filter(PageEntityLink.entity_id == target_entity.id).all()}
+    for link in db.query(PageEntityLink).filter(PageEntityLink.entity_id == source_entity.id).all():
+        if link.page_id in existing_page_links:
+            db.delete(link)
+        else:
+            link.entity_id = target_entity.id
+
+    for claim in db.query(Claim).filter(Claim.entity_ids.isnot(None)).all():
+        if source_entity.id not in (claim.entity_ids or []):
+            continue
+        claim.entity_ids = sorted({target_entity.id if value == source_entity.id else value for value in (claim.entity_ids or [])})
+
+    for unit in db.query(KnowledgeUnit).filter(KnowledgeUnit.entity_ids.isnot(None)).all():
+        if source_entity.id not in (unit.entity_ids or []):
+            continue
+        unit.entity_ids = sorted({target_entity.id if value == source_entity.id else value for value in (unit.entity_ids or [])})
+
+    for page in db.query(Page).filter(Page.related_entity_ids.isnot(None)).all():
+        if source_entity.id not in (page.related_entity_ids or []):
+            continue
+        page.related_entity_ids = sorted({target_entity.id if value == source_entity.id else value for value in (page.related_entity_ids or [])})
+
+    target_entity.aliases = sorted(
+        {
+            *(target_entity.aliases or []),
+            *(source_entity.aliases or []),
+            source_entity.name,
+        }
+        - {target_entity.name}
+    )
+    if not target_entity.description and source_entity.description:
+        target_entity.description = source_entity.description
+    target_entity.updated_at = datetime.now(timezone.utc)
+    target_entity.reviewed_at = target_entity.updated_at
+    target_entity.reviewed_by = actor
+    source_entity.status = "merged"
+    source_entity.merged_into_entity_id = target_entity.id
+    source_entity.updated_at = target_entity.updated_at
+    source_entity.reviewed_at = target_entity.updated_at
+    source_entity.reviewed_by = actor
+    create_audit_log(
+        db,
+        action="merge_entity",
+        object_type="entity",
+        object_id=source_entity.id,
+        actor=actor,
+        summary=f"Merged entity `{source_entity.name}` into `{target_entity.name}`",
+        metadata={"targetEntityId": target_entity.id},
+    )
+    db.commit()
+    return get_entity_detail(db, target_entity.id)
 
 
 def list_timeline_events(db: Session, page: int = 1, page_size: int = 50, search: str | None = None) -> dict:

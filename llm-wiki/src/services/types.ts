@@ -1,7 +1,7 @@
 import type {
   Source, SourceChunk, SourceSuggestion, Page, PageVersion, Diagram, DiagramVersion, AuditLog, ReviewItem, Job,
   DashboardStats, GraphData, AskResponse, ChatSession, ChatSessionDetail, SearchResult,
-  PaginatedResponse, Entity, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
+  PaginatedResponse, Entity, EntityDetail, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
   KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, ManagedUser, Department, AdminRole, Note
 } from '@/lib/types'
 import type { PageBlock } from '@/lib/page-blocks'
@@ -77,6 +77,12 @@ export interface IPageService {
   list(params?: { page?: number; pageSize?: number; status?: PageStatus; type?: string; search?: string; sort?: string; collectionId?: string }): Promise<PaginatedResponse<Page>>
   getBySlug(slug: string): Promise<Page>
   getEntityExplorer(params?: { page?: number; pageSize?: number; search?: string; entityType?: string }): Promise<PaginatedResponse<ExplorerEntity>>
+  getEntityById(entityId: string): Promise<EntityDetail>
+  updateEntity(entityId: string, payload: { name: string; entityType: string; description: string; aliases: string[] }): Promise<EntityDetail>
+  verifyEntity(entityId: string, payload: { verificationStatus: string }): Promise<EntityDetail>
+  archiveEntity(entityId: string): Promise<EntityDetail>
+  restoreEntity(entityId: string): Promise<EntityDetail>
+  mergeEntity(entityId: string, payload: { targetEntityId: string }): Promise<EntityDetail>
   getTimelineExplorer(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<TimelineEvent>>
   getGlossary(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<GlossaryTerm>>
   getVersions(pageId: string): Promise<PageVersion[]>

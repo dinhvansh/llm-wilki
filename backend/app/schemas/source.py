@@ -93,6 +93,15 @@ class EntityOut(BaseModel):
     description: str
     aliases: list[str]
     normalizedName: str
+    status: str
+    verificationStatus: str
+    mergedIntoEntityId: str | None = None
+    reviewedAt: str | None = None
+    reviewedBy: str | None = None
+    sourceCount: int = 0
+    pageCount: int = 0
+    sourceIds: list[str] = []
+    pageIds: list[str] = []
     createdAt: str
 
 

@@ -1,4 +1,4 @@
-import type { AuditLog, Page, PageVersion, PaginatedResponse } from '@/lib/types'
+import type { AuditLog, EntityDetail, Page, PageVersion, PaginatedResponse } from '@/lib/types'
 
 import { apiRequest } from './api-client'
 import type { IPageService } from './types'
@@ -26,6 +26,33 @@ export function createRealPageService(): IPageService {
     },
     async getEntityExplorer(params) {
       return apiRequest(`/pages/entity-explorer${buildQuery({ page: params?.page, pageSize: params?.pageSize, search: params?.search, entityType: params?.entityType })}`)
+    },
+    async getEntityById(entityId) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}`)
+    },
+    async updateEntity(entityId, payload) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}/update`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    },
+    async verifyEntity(entityId, payload) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}/verify`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    },
+    async archiveEntity(entityId) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}/archive`, { method: 'POST' })
+    },
+    async restoreEntity(entityId) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}/restore`, { method: 'POST' })
+    },
+    async mergeEntity(entityId, payload) {
+      return apiRequest<EntityDetail>(`/pages/entity-explorer/${entityId}/merge`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
     },
     async getTimelineExplorer(params) {
       return apiRequest(`/pages/timeline-explorer${buildQuery({ page: params?.page, pageSize: params?.pageSize, search: params?.search })}`)

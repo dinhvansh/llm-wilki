@@ -35,6 +35,72 @@ export function useEntityExplorer(params?: { page?: number; pageSize?: number; s
   })
 }
 
+export function useEntity(entityId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['entity', entityId],
+    queryFn: () => pageService.getEntityById(entityId),
+    enabled: (options?.enabled ?? true) && !!entityId,
+  })
+}
+
+export function useUpdateEntity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ entityId, payload }: { entityId: string; payload: { name: string; entityType: string; description: string; aliases: string[] } }) =>
+      pageService.updateEntity(entityId, payload),
+    onSuccess: (entity) => {
+      qc.invalidateQueries({ queryKey: ['entity-explorer'] })
+      qc.invalidateQueries({ queryKey: ['entity', entity.id] })
+    },
+  })
+}
+
+export function useVerifyEntity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ entityId, verificationStatus }: { entityId: string; verificationStatus: string }) =>
+      pageService.verifyEntity(entityId, { verificationStatus }),
+    onSuccess: (entity) => {
+      qc.invalidateQueries({ queryKey: ['entity-explorer'] })
+      qc.invalidateQueries({ queryKey: ['entity', entity.id] })
+    },
+  })
+}
+
+export function useArchiveEntity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (entityId: string) => pageService.archiveEntity(entityId),
+    onSuccess: (entity) => {
+      qc.invalidateQueries({ queryKey: ['entity-explorer'] })
+      qc.invalidateQueries({ queryKey: ['entity', entity.id] })
+    },
+  })
+}
+
+export function useRestoreEntity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (entityId: string) => pageService.restoreEntity(entityId),
+    onSuccess: (entity) => {
+      qc.invalidateQueries({ queryKey: ['entity-explorer'] })
+      qc.invalidateQueries({ queryKey: ['entity', entity.id] })
+    },
+  })
+}
+
+export function useMergeEntity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ entityId, targetEntityId }: { entityId: string; targetEntityId: string }) =>
+      pageService.mergeEntity(entityId, { targetEntityId }),
+    onSuccess: (entity) => {
+      qc.invalidateQueries({ queryKey: ['entity-explorer'] })
+      qc.invalidateQueries({ queryKey: ['entity', entity.id] })
+    },
+  })
+}
+
 export function useTimelineExplorer(params?: { page?: number; pageSize?: number; search?: string }) {
   return useQuery({
     queryKey: ['timeline-explorer', params],

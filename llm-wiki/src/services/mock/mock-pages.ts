@@ -45,6 +45,36 @@ export function createMockPageService(): IPageService {
       return { data: [] as ExplorerEntity[], total: 0, page: 1, pageSize: 50, hasMore: false }
     },
 
+    async getEntityById() {
+      await delay()
+      throw new Error('Entity detail is not available in mock mode')
+    },
+
+    async updateEntity() {
+      await delay()
+      throw new Error('Entity editing is not available in mock mode')
+    },
+
+    async verifyEntity() {
+      await delay()
+      throw new Error('Entity verification is not available in mock mode')
+    },
+
+    async archiveEntity() {
+      await delay()
+      throw new Error('Entity archive is not available in mock mode')
+    },
+
+    async restoreEntity() {
+      await delay()
+      throw new Error('Entity restore is not available in mock mode')
+    },
+
+    async mergeEntity() {
+      await delay()
+      throw new Error('Entity merge is not available in mock mode')
+    },
+
     async getTimelineExplorer() {
       await delay()
       return { data: [] as TimelineEvent[], total: 0, page: 1, pageSize: 50, hasMore: false }

@@ -176,12 +176,25 @@ export interface Entity {
   description: string
   aliases: string[]
   normalizedName: string
+  status?: 'active' | 'archived' | 'merged' | string
+  verificationStatus?: 'verified' | 'disputed' | 'unverified' | string
+  mergedIntoEntityId?: string | null
+  reviewedAt?: string | null
+  reviewedBy?: string | null
+  sourceIds?: string[]
+  pageIds?: string[]
   createdAt: string
 }
 
 export interface ExplorerEntity extends Entity {
   sourceCount: number
   pageCount: number
+}
+
+export interface EntityDetail extends ExplorerEntity {
+  linkedSources: Array<{ id: string; title: string; sourceType: string }>
+  linkedPages: Array<{ id: string; slug: string; title: string; status: string }>
+  mergeCandidates: Array<{ id: string; name: string; entityType: string; verificationStatus: string }>
 }
 
 export interface PageTypeCandidate {

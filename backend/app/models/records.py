@@ -205,6 +205,13 @@ class Entity(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     normalized_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified", index=True)
+    merged_into_entity_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    reviewed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     source_links: Mapped[list["SourceEntityLink"]] = relationship(back_populates="entity", cascade="all, delete-orphan")

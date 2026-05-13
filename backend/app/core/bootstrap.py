@@ -42,7 +42,9 @@ from app.services.auth import ensure_dev_admin_user
 def init_database(db: Session, seed_demo_data: bool = True) -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_page_content_json_column()
+    _ensure_entity_management_columns()
     _backfill_page_content_json(db)
+    _backfill_entity_management_fields(db)
     ensure_dev_admin_user(db)
     has_sources = db.query(Source.id).first()
     if has_sources:
@@ -91,6 +93,34 @@ def _ensure_page_content_json_column() -> None:
         connection.execute(text(statement))
 
 
+def _ensure_entity_management_columns() -> None:
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("entities")}
+    statements: list[str] = []
+    dialect = engine.dialect.name
+    datetime_sql = "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "DATETIME"
+    json_sql = "JSONB" if dialect == "postgresql" else "JSON"
+    if "status" not in columns:
+        statements.append("ALTER TABLE entities ADD COLUMN status VARCHAR(32) DEFAULT 'active'")
+    if "verification_status" not in columns:
+        statements.append("ALTER TABLE entities ADD COLUMN verification_status VARCHAR(32) DEFAULT 'unverified'")
+    if "merged_into_entity_id" not in columns:
+        statements.append("ALTER TABLE entities ADD COLUMN merged_into_entity_id VARCHAR(64)")
+    if "reviewed_at" not in columns:
+        statements.append(f"ALTER TABLE entities ADD COLUMN reviewed_at {datetime_sql}")
+    if "reviewed_by" not in columns:
+        statements.append("ALTER TABLE entities ADD COLUMN reviewed_by VARCHAR(128)")
+    if "updated_at" not in columns:
+        statements.append(f"ALTER TABLE entities ADD COLUMN updated_at {datetime_sql}")
+    if "metadata_json" not in columns:
+        statements.append(f"ALTER TABLE entities ADD COLUMN metadata_json {json_sql}")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def _backfill_page_content_json(db: Session) -> None:
     from app.services.page_blocks import markdown_to_blocks
 
@@ -101,6 +131,26 @@ def _backfill_page_content_json(db: Session) -> None:
             continue
         page.content_json = markdown_to_blocks(page.content_md)
         changed = True
+    if changed:
+        db.commit()
+
+
+def _backfill_entity_management_fields(db: Session) -> None:
+    now = datetime.now(timezone.utc)
+    changed = False
+    for entity in db.query(Entity).all():
+        if not entity.status:
+            entity.status = "active"
+            changed = True
+        if not entity.verification_status:
+            entity.verification_status = "unverified"
+            changed = True
+        if entity.updated_at is None:
+            entity.updated_at = entity.created_at or now
+            changed = True
+        if entity.metadata_json is None:
+            entity.metadata_json = {}
+            changed = True
     if changed:
         db.commit()
 
