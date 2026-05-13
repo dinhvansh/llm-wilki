@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Database, FileText, CheckCircle,
-  Network, Settings, ChevronLeft, ChevronRight, Boxes, Milestone, BookMarked, ShieldCheck, Activity, GitBranch, Sparkles, Building2, BadgeCheck
+  Network, Settings, ChevronLeft, ChevronRight, Boxes, Milestone, BookMarked, ShieldCheck, Activity, GitBranch, Sparkles, Building2, BadgeCheck, Trash2
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -36,6 +36,7 @@ const NAV_GROUPS = [
     items: [
       { label: 'Review Queue', href: '/review', icon: CheckCircle, permission: 'review:read' },
       { label: 'Lint Center', href: '/lint', icon: ShieldCheck, permission: 'lint:read' },
+      { label: 'Trash', href: '/trash', icon: Trash2, permission: 'page:read' },
       { label: 'Operations', href: '/admin', icon: Activity, permission: 'admin:read', role: 'admin' },
       { label: 'Users', href: '/admin/users', icon: ShieldCheck, permission: 'admin:read', role: 'admin' },
       { label: 'Departments', href: '/admin/departments', icon: Building2, permission: 'admin:read', role: 'admin' },
