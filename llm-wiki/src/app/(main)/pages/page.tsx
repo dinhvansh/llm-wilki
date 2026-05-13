@@ -133,6 +133,11 @@ export default function PagesPage() {
     }
   }
 
+  const openComposerWithTemplate = (templateId: DraftTemplate) => {
+    setDraftTemplate(templateId)
+    setIsComposerOpen(true)
+  }
+
   return (
     <div>
       <PageHeader
@@ -145,7 +150,7 @@ export default function PagesPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
-            {isCreatingDraft ? 'Creating...' : 'New Page'}
+            {isCreatingDraft ? 'Creating...' : 'New Note / Page'}
           </button>
         }
       />
@@ -275,6 +280,48 @@ export default function PagesPage() {
       )}
 
       <div className="p-6 space-y-4">
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-primary">Quick create</div>
+              <h2 className="mt-1 text-xl font-semibold">Start from a friendly note template</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This is the faster path for document notes, meeting notes, decision logs, and blank pages.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsComposerOpen(true)}
+              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm hover:bg-accent"
+            >
+              <Sparkles className="h-4 w-4 text-primary" />
+              Open full composer
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {draftTemplates.map(template => {
+              const Icon = template.icon
+              return (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => openComposerWithTemplate(template.id)}
+                  className="rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">{template.title}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">{template.description}</p>
+                  <div className="mt-3 text-xs text-foreground/80">
+                    {template.sections.slice(0, 2).join(' • ')}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">

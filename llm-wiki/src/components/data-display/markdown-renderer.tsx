@@ -1,8 +1,9 @@
 'use client'
-import { Children } from 'react'
+import { Children, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
+import { Check, Copy, ExternalLink } from 'lucide-react'
 
 interface MarkdownRendererProps {
   content: string
@@ -18,15 +19,67 @@ function isRenderableImageUrl(value?: string | null) {
 }
 
 function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'url'>('idle')
   if (!src) return null
+
+  const copyImage = async () => {
+    try {
+      if (typeof window !== 'undefined' && 'clipboard' in navigator && 'ClipboardItem' in window) {
+        const response = await fetch(src)
+        const blob = await response.blob()
+        const clipboardItem = new window.ClipboardItem({
+          [blob.type || 'image/png']: blob,
+        })
+        await navigator.clipboard.write([clipboardItem])
+        setCopyState('copied')
+      } else {
+        await navigator.clipboard.writeText(src)
+        setCopyState('url')
+      }
+    } catch {
+      try {
+        await navigator.clipboard.writeText(src)
+        setCopyState('url')
+      } catch {
+        setCopyState('idle')
+      }
+    } finally {
+      window.setTimeout(() => setCopyState('idle'), 1800)
+    }
+  }
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt ?? ''}
-      className="my-4 w-full rounded-lg border border-border object-contain"
-      loading="lazy"
-    />
+    <figure className="group my-4 overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border/70 px-3 py-2 text-xs text-muted-foreground">
+        <span className="truncate">{alt || 'Image attachment'}</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={copyImage}
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 hover:bg-accent"
+          >
+            {copyState === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            {copyState === 'copied' ? 'Copied image' : copyState === 'url' ? 'Copied URL' : 'Copy image'}
+          </button>
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 hover:bg-accent"
+          >
+            Open
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt ?? ''}
+        className="w-full object-contain"
+        loading="lazy"
+      />
+    </figure>
   )
 }
 

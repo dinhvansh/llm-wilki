@@ -703,9 +703,22 @@ function AskAIPageInner() {
         </aside>
 
         <div className="min-h-0 flex flex-col">
-        {messages.length > 0 && (
-          <div className="border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
-            <div className="mx-auto flex max-w-3xl flex-col gap-2 md:flex-row md:items-center">
+        <div className="border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conversation view</div>
+                <div className="mt-1 text-sm text-foreground">
+                  {messages.length > 0
+                    ? 'Recent-first mode keeps the layout stable and lets you expand older chat only when needed.'
+                    : 'Chat history will stay compact here. Older answers collapse automatically once the conversation grows.'}
+                </div>
+              </div>
+              <div className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+                {messages.length} message{messages.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -714,8 +727,9 @@ function AskAIPageInner() {
                     setChatSearch(event.target.value)
                     setShowAllHistory(true)
                   }}
-                  placeholder="Search this conversation..."
-                  className="h-9 w-full rounded-full border border-input bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder={messages.length > 0 ? 'Search this conversation...' : 'Search will activate after the first question'}
+                  disabled={messages.length === 0}
+                  className="h-9 w-full rounded-full border border-input bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -742,6 +756,13 @@ function AskAIPageInner() {
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+        {messages.length > 0 && (
+          <div className="border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+            <div className="mx-auto max-w-3xl text-xs text-muted-foreground">
+              Scroll is now constrained to the conversation panel. New AI answers pin to the top of the latest card instead of forcing the page to jump to the bottom.
             </div>
           </div>
         )}

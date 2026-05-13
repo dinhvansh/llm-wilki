@@ -22,6 +22,7 @@ import {
   Edit3, History, AlertTriangle, RefreshCw,
   Layers, Tag, FileText, Link2, CheckCircle,
   Eye, PanelLeft, PanelRight, Search, Star, CalendarDays, ListChecks,
+  Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check,
 } from 'lucide-react'
 
 type SavedView = 'all' | 'drafts' | 'review' | 'stale' | 'source-linked'
@@ -41,6 +42,14 @@ const PAGE_TYPE_LABELS: Record<string, string> = {
   faq: 'FAQs',
 }
 
+const WORKSPACE_INSERTS = [
+  { label: 'Summary', content: '\n## Summary\n\n- \n' },
+  { label: 'Key points', content: '\n## Key points\n\n- \n' },
+  { label: 'Questions', content: '\n## Open questions\n\n- \n' },
+  { label: 'Action items', content: '\n## Action items\n\n- [ ] \n' },
+  { label: 'Source notes', content: '\n## Source notes\n\n- Source:\n- Why it matters:\n' },
+]
+
 function pageCitationAskPrompt(pageTitle: string, claimText: string, sourceTitle: string): string {
   return `Explain how the source "${sourceTitle}" supports the page "${pageTitle}" claim: ${claimText}`
 }
@@ -56,6 +65,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const [mobileEditorPane, setMobileEditorPane] = useState<'edit' | 'preview'>('edit')
   const [selectedCitation, setSelectedCitation] = useState<PageCitation | null>(null)
   const [selectedBacklink, setSelectedBacklink] = useState<NonNullable<Page['backlinks']>[number] | null>(null)
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
   const { data: versions } = usePageVersions(page?.id ?? '')
@@ -105,6 +115,22 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const backlinkCount = page.backlinks?.length ?? 0
   const timelineEvents = page.timelineEvents ?? []
   const glossaryTerms = page.glossaryTerms ?? []
+  const collectionName = collections?.find(collection => collection.id === page.collectionId)?.name ?? 'Standalone'
+  const authoringPrompts = [
+    `Clarify the top 3 claims in ${page.title}.`,
+    `What citations are still missing from ${page.title}?`,
+    `Turn ${page.title} into a concise internal note.`,
+  ]
+
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(isEditing ? editContent : page.contentMd)
+      setCopyState('copied')
+      window.setTimeout(() => setCopyState('idle'), 1800)
+    } catch {
+      setCopyState('idle')
+    }
+  }
 
   const statusBanner = page.status === 'stale' ? (
     <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-200 text-red-800 text-sm">
@@ -159,22 +185,33 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
         title={page.title}
         description={page.summary}
         breadcrumbs={[{ label: 'Pages', href: '/pages' }, { label: page.title }]}
+        className="border-b border-border/70 bg-background/95 backdrop-blur"
         actions={
-          <div className="flex items-center gap-1.5">
-            <StatusBadge status={page.status} type="page" />
-            <StatusBadge status={page.pageType} type="pageType" />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="mr-1 flex items-center gap-1.5">
+              <StatusBadge status={page.status} type="page" />
+              <StatusBadge status={page.pageType} type="pageType" />
+            </div>
             <Link
               href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}`}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md hover:bg-accent transition-colors"
+              className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm hover:bg-accent transition-colors"
             >
               <BookOpen className="w-4 h-4" />
-              Ask This Page
+              Ask page
             </Link>
+            <button
+              type="button"
+              onClick={copyMarkdown}
+              className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm hover:bg-accent transition-colors"
+            >
+              {copyState === 'copied' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copyState === 'copied' ? 'Copied' : 'Copy markdown'}
+            </button>
             {page.status === 'draft' && (
               <button
                 onClick={() => publishMutation.mutate(page.id)}
                 disabled={publishMutation.isPending || !canEdit}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
                 <CheckCircle className="w-4 h-4" />
                 {publishMutation.isPending ? 'Publishing...' : 'Publish'}
@@ -184,7 +221,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               <button
                 onClick={() => unpublishMutation.mutate(page.id)}
                 disabled={unpublishMutation.isPending || !canEdit}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
               >
                 <RefreshCw className="w-4 h-4" />
                 {unpublishMutation.isPending ? 'Unpublishing...' : 'Unpublish'}
@@ -197,10 +234,10 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 if (!isEditing) setEditContent(page.contentMd)
               }}
               disabled={!canEdit}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md hover:bg-accent transition-colors"
+              className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm hover:bg-accent transition-colors"
             >
-              <Edit3 className="w-4 h-4" />
-              {isEditing ? 'Cancel' : 'Edit'}
+              <PenSquare className="w-4 h-4" />
+              {isEditing ? 'Close editor' : 'Refine note'}
             </button>
             <button
               onClick={() => {
@@ -211,10 +248,10 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 )
               }}
               disabled={generateDiagramMutation.isPending || !canEdit}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm hover:bg-accent transition-colors disabled:opacity-50"
             >
               <Layers className="w-4 h-4" />
-              {generateDiagramMutation.isPending ? 'Generating BPM...' : bpmAssessment?.classification === 'not_recommended' ? 'Generate BPM Anyway' : 'Generate BPM Draft'}
+              {generateDiagramMutation.isPending ? 'Generating BPM...' : bpmAssessment?.classification === 'not_recommended' ? 'Generate BPM anyway' : 'Generate BPM draft'}
             </button>
           </div>
         }
@@ -224,16 +261,16 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
       {statusBanner}
 
       {/* Metadata bar */}
-      <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-        <span>v{page.currentVersion}</span>
-        <span>Updated {formatDateTime(page.lastComposedAt)}</span>
-        {page.publishedAt && <span>Published {formatDate(page.publishedAt)}</span>}
-        <span>{totalCitations} key facts</span>
-        <span>{page.relatedSourceIds.length} sources</span>
-        <span>{page.relatedPageIds.length} related pages</span>
-        <span>{backlinkCount} backlinks</span>
-        <span>
-          Collection:{' '}
+      <div className="flex flex-wrap items-center gap-3 border-b border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">v{page.currentVersion}</span>
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">Updated {formatDateTime(page.lastComposedAt)}</span>
+        {page.publishedAt && <span className="rounded-full border border-border bg-background px-2.5 py-1">Published {formatDate(page.publishedAt)}</span>}
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">{totalCitations} citations</span>
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">{page.relatedSourceIds.length} sources</span>
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">{page.relatedPageIds.length} related pages</span>
+        <span className="rounded-full border border-border bg-background px-2.5 py-1">{backlinkCount} backlinks</span>
+        <span className="flex items-center gap-2 rounded-full border border-border bg-background px-2.5 py-1">
+          Collection
           <select
             value={page.collectionId ?? ''}
             onChange={event => assignCollection.mutate({ pageId: page.id, collectionId: event.target.value || null })}
@@ -246,7 +283,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
             ))}
           </select>
         </span>
-        <span className="ml-auto">Owner: {page.owner}</span>
+        <span className="ml-auto rounded-full border border-border bg-background px-2.5 py-1">Owner: {page.owner}</span>
       </div>
 
       {/* Workspace layout */}
@@ -335,28 +372,64 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
         {/* CENTER: Main content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className={cn('p-6', isEditing ? 'w-full max-w-none' : 'max-w-3xl mx-auto')}>
-            {/* Tags */}
-            {page.tags.length > 0 && (
-              <div className="flex gap-1.5 flex-wrap mb-4">
-                {page.tags.map(tag => (
-                  <span
-                    key={tag}
-                    className="px-2 py-0.5 text-xs bg-secondary text-secondary-foreground rounded-full flex items-center gap-1"
-                  >
-                    <Tag className="w-3 h-3" />
-                    {tag}
-                  </span>
-                ))}
+            <div className="mb-5 rounded-3xl border border-border bg-card p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-2xl">
+                  <div className="flex flex-wrap gap-1.5">
+                    {page.tags.map(tag => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                      >
+                        <Tag className="h-3 w-3" />
+                        {tag}
+                      </span>
+                    ))}
+                    {page.tags.length === 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground">
+                        <Tag className="h-3 w-3" />
+                        add note tags as the page becomes clearer
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Authoring workspace</div>
+                    <h2 className="mt-1 text-2xl font-semibold tracking-tight">Write this like a working note, then promote it to a polished page.</h2>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      This draft lives in <span className="font-medium text-foreground">{collectionName}</span>. Keep the main idea near the top, anchor claims to sources, and leave open questions visible instead of burying them in prose.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-2 text-sm lg:min-w-72">
+                  <div className="rounded-2xl border border-border bg-background p-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                      Smart prompts
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {authoringPrompts.map(prompt => (
+                        <Link
+                          key={prompt}
+                          href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(prompt)}`}
+                          className="block rounded-xl border border-border px-3 py-2 text-xs hover:border-primary/50 hover:bg-accent"
+                        >
+                          {prompt}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
 
             {/* Edit mode */}
             {isEditing ? (
               <div className="w-full space-y-3">
+                <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-sm font-semibold">Markdown Workspace</h3>
-                    <p className="text-xs text-muted-foreground">Native editor strategy: plain Markdown textarea with live preview.</p>
+                    <h3 className="text-base font-semibold">Markdown Workspace</h3>
+                    <p className="text-sm text-muted-foreground">Draft in blocks. Keep raw notes, source-backed claims, and next actions separate so the page is easy to refine later.</p>
                   </div>
                   <div className="flex lg:hidden border border-border rounded-md overflow-hidden">
                     {(['edit', 'preview'] as const).map(pane => (
@@ -370,6 +443,19 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                     ))}
                   </div>
                 </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {WORKSPACE_INSERTS.map(block => (
+                    <button
+                      key={block.label}
+                      type="button"
+                      onClick={() => setEditContent(prev => `${prev.trimEnd()}${block.content}`)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
+                    >
+                      <Wand2 className="h-3.5 w-3.5 text-primary" />
+                      Insert {block.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div className={cn('space-y-2', mobileEditorPane === 'preview' && 'hidden lg:block')}>
                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -379,7 +465,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                     <textarea
                       value={editContent}
                       onChange={e => setEditContent(e.target.value)}
-                      className="block w-full min-h-[70vh] p-4 text-sm font-mono border border-input rounded-md bg-background resize-y"
+                      className="block w-full min-h-[70vh] rounded-2xl border border-input bg-background p-5 text-sm leading-7 resize-y"
+                      placeholder="Start with a concise summary, then add key points, source notes, and open questions..."
                     />
                   </div>
                   <div className={cn('space-y-2', mobileEditorPane === 'edit' && 'hidden lg:block')}>
@@ -387,7 +474,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       <Eye className="w-3.5 h-3.5" />
                       Preview
                     </div>
-                    <div className="min-h-[70vh] p-4 border border-input rounded-md bg-card overflow-y-auto">
+                    <div className="min-h-[70vh] overflow-y-auto rounded-2xl border border-input bg-background p-5">
                       <MarkdownRenderer content={editContent || '_Nothing to preview yet._'} />
                     </div>
                   </div>
@@ -396,7 +483,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                   <button
                     onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })}
                     disabled={updateMutation.isPending || !canEdit}
-                    className="px-3 py-1.5 text-sm border border-input rounded-md hover:bg-accent"
+                    className="rounded-full border border-input px-4 py-2 text-sm hover:bg-accent"
                   >
                     {updateMutation.isPending ? 'Saving...' : 'Save Draft'}
                   </button>
@@ -407,11 +494,33 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                     Cancel
                   </button>
                 </div>
+                </div>
               </div>
             ) : (
               <>
                 {/* Content */}
-                <MarkdownRenderer content={page.contentMd} />
+                <div className="rounded-[28px] border border-border bg-card p-6 shadow-sm">
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      <ClipboardList className="h-3.5 w-3.5 text-primary" />
+                      Reading view
+                    </div>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditContent(page.contentMd)
+                          setIsEditing(true)
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" />
+                        Refine this draft
+                      </button>
+                    )}
+                  </div>
+                  <MarkdownRenderer content={page.contentMd} className="prose-headings:tracking-tight prose-p:text-[15px] prose-p:leading-7" />
+                </div>
 
             {timelineEvents.length > 0 && (
                   <div className="mt-8 rounded-xl border border-border bg-card p-5">
@@ -554,6 +663,24 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
           rightPanelOpen ? 'max-h-96 w-full lg:max-h-none lg:w-80' : 'hidden lg:block lg:w-0'
         )}>
           <div className="p-4">
+            <div className="mb-6 rounded-2xl border border-border bg-background p-4">
+              <h4 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Continue Writing
+              </h4>
+              <div className="space-y-2">
+                {authoringPrompts.map(prompt => (
+                  <Link
+                    key={prompt}
+                    href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(prompt)}`}
+                    className="block rounded-xl border border-border px-3 py-2 text-xs hover:border-primary/50 hover:bg-accent"
+                  >
+                    {prompt}
+                  </Link>
+                ))}
+              </div>
+            </div>
+
             {/* Backlinks */}
             <div className="mb-6">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -675,25 +802,6 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 {relatedSources.length === 0 && (
                   <p className="text-xs text-muted-foreground">No sources linked.</p>
                 )}
-              </div>
-            </div>
-
-            <div className="mb-6 rounded-lg border border-border bg-background p-4">
-              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ask Next</h4>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  `What source evidence backs ${page.title} most strongly?`,
-                  `What parts of ${page.title} may be stale or need review?`,
-                  `Summarize ${page.title} for a quick handoff.`,
-                ].map(prompt => (
-                  <Link
-                    key={prompt}
-                    href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}&prompt=${encodeURIComponent(prompt)}`}
-                    className="rounded-full border border-border px-3 py-1.5 text-xs hover:border-primary/50 hover:bg-accent"
-                  >
-                    {prompt}
-                  </Link>
-                ))}
               </div>
             </div>
 
