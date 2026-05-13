@@ -99,20 +99,20 @@ export default function EntityExplorerPage() {
         title="Entity Explorer"
         description="Govern extracted entities like managed knowledge objects: review them, verify them, merge duplicates, and archive noisy ones."
       />
-      <div className="grid gap-6 p-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="grid gap-6 p-4 lg:p-6 2xl:grid-cols-[320px_minmax(0,1fr)]">
         <section className="space-y-4 rounded-2xl border border-border bg-card p-4">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities..." className="pl-8 h-10" />
           </div>
-          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+          <div className="grid gap-2 md:grid-cols-2">
             <select value={entityType} onChange={e => setEntityType(e.target.value as (typeof ENTITY_TYPES)[number])} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
               {ENTITY_TYPES.map(option => <option key={option} value={option}>{option === 'all' ? 'All types' : option}</option>)}
             </select>
             <select value={verificationFilter} onChange={e => setVerificationFilter(e.target.value as (typeof VERIFICATION_FILTERS)[number])} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
               {VERIFICATION_FILTERS.map(option => <option key={option} value={option}>{option === 'all' ? 'All verification' : option}</option>)}
             </select>
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as (typeof STATUS_FILTERS)[number])} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as (typeof STATUS_FILTERS)[number])} className="h-10 rounded-md border border-input bg-background px-3 text-sm md:col-span-2">
               {STATUS_FILTERS.map(option => <option key={option} value={option}>{option === 'all' ? 'All statuses' : option}</option>)}
             </select>
           </div>
@@ -222,11 +222,11 @@ export default function EntityExplorerPage() {
                 </div>
               </div>
 
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="space-y-5">
                   <div className="rounded-xl border border-border bg-background p-4">
                     <div className="mb-4 text-sm font-semibold">Canonical profile</div>
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 xl:grid-cols-2">
                       <label className="block">
                         <div className="mb-1 text-sm font-medium">Name</div>
                         <Input value={draftName} onChange={e => setDraftName(e.target.value)} />
@@ -237,11 +237,11 @@ export default function EntityExplorerPage() {
                           {ENTITY_TYPES.filter(option => option !== 'all').map(option => <option key={option} value={option}>{option}</option>)}
                         </select>
                       </label>
-                      <label className="block md:col-span-2">
+                      <label className="block xl:col-span-2">
                         <div className="mb-1 text-sm font-medium">Description</div>
                         <textarea value={draftDescription} onChange={e => setDraftDescription(e.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
                       </label>
-                      <label className="block md:col-span-2">
+                      <label className="block xl:col-span-2">
                         <div className="mb-1 text-sm font-medium">Aliases</div>
                         <Input value={draftAliases} onChange={e => setDraftAliases(e.target.value)} placeholder="Comma-separated aliases" />
                       </label>
@@ -264,7 +264,7 @@ export default function EntityExplorerPage() {
                       <ArrowRightLeft className="h-4 w-4" />
                       Merge duplicate into another entity
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
                       <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
                         <option value="">Select merge target</option>
                         {mergeCandidates.map(candidate => (
