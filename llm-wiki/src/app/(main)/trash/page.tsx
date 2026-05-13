@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/data-display/empty-state'
 import { ErrorState } from '@/components/data-display/error-state'
@@ -9,7 +8,7 @@ import { StatusBadge } from '@/components/data-display/status-badge'
 import { usePages, useRestorePage } from '@/hooks/use-pages'
 import { useArchiveSourceAction, useRestoreSourceAction, useSources } from '@/hooks/use-sources'
 import { formatRelativeTime } from '@/lib/utils'
-import { Eye, RefreshCw, Trash2 } from 'lucide-react'
+import { RefreshCw, Trash2 } from 'lucide-react'
 
 export default function TrashPage() {
   const pagesQuery = usePages({ status: 'archived', pageSize: 100, sort: 'updated' })
@@ -102,13 +101,6 @@ export default function TrashPage() {
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 Restore
                               </button>
-                              <Link
-                                href={`/pages/${page.slug}`}
-                                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                                View
-                              </Link>
                             </div>
                           </td>
                         </tr>
@@ -169,13 +161,6 @@ export default function TrashPage() {
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 Restore
                               </button>
-                              <Link
-                                href={`/sources/${source.id}`}
-                                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                                View
-                              </Link>
                             </div>
                           </td>
                         </tr>

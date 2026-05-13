@@ -223,7 +223,6 @@ export default function SourcesPage() {
             <option value="indexed">Indexed</option>
             <option value="extracted">Extracted</option>
             <option value="failed">Failed</option>
-            <option value="archived">Trash</option>
           </select>
           <select
             value={collectionFilter}

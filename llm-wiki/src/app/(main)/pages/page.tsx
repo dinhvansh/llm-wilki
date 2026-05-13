@@ -353,7 +353,7 @@ export default function PagesPage() {
             className="h-9 px-3 text-sm border border-input bg-background rounded-md"
           >
             <option value="">All Status</option>
-            {(['draft', 'in_review', 'reviewed', 'published', 'stale', 'archived'] as PageStatus[]).map(s => (
+            {(['draft', 'in_review', 'reviewed', 'published', 'stale'] as PageStatus[]).map(s => (
               <option key={s} value={s}>{PAGE_STATUS_CONFIG[s].label}</option>
             ))}
           </select>

@@ -306,7 +306,7 @@ export default function SourceDetailPage({ params }: { params: Promise<{ id: str
               </button>
             ) : (
               <button
-                onClick={() => archiveSource.mutate()}
+                onClick={() => archiveSource.mutate(undefined, { onSuccess: () => router.push('/trash') })}
                 disabled={archiveSource.isPending || !canMutate}
                 className="rounded-md border border-input px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent disabled:opacity-50"
               >

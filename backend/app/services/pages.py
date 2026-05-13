@@ -239,6 +239,8 @@ def list_pages(db: Session, page: int = 1, page_size: int = 20, status: str | No
         query = apply_collection_scope_filter(query, Page, actor)
     if status:
         query = query.filter(Page.status == status)
+    else:
+        query = query.filter(Page.status != "archived")
     if page_type:
         query = query.filter(Page.page_type == page_type)
     if collection_id:
@@ -283,9 +285,11 @@ def list_pages(db: Session, page: int = 1, page_size: int = 20, status: str | No
     return {"data": data, "total": len(items), "page": page, "pageSize": page_size, "hasMore": start + page_size < len(items)}
 
 
-def get_page_by_slug(db: Session, slug: str, actor=None) -> dict | None:
+def get_page_by_slug(db: Session, slug: str, actor=None, include_archived: bool = False) -> dict | None:
     page = db.query(Page).filter(Page.slug == slug).first()
     if not page:
+        return None
+    if not include_archived and page.status == "archived":
         return None
     if actor is not None and not can_access_collection_id(actor, page.collection_id):
         return None
@@ -307,8 +311,10 @@ def get_page_by_slug(db: Session, slug: str, actor=None) -> dict | None:
     )
 
 
-def get_page_by_id(db: Session, page_id: str, actor=None) -> Page | None:
+def get_page_by_id(db: Session, page_id: str, actor=None, include_archived: bool = False) -> Page | None:
     page = db.query(Page).filter(Page.id == page_id).first()
+    if page and not include_archived and page.status == "archived":
+        return None
     if page and actor is not None and not can_access_collection_id(actor, page.collection_id):
         return None
     return page
@@ -494,11 +500,11 @@ def archive_page(db: Session, page_id: str, actor: str = "Current User", actor_m
         metadata={"slug": page.slug, "versionNo": page.current_version, **(actor_metadata or {})},
     )
     db.commit()
-    return get_page_by_slug(db, page.slug)
+    return get_page_by_slug(db, page.slug, include_archived=True)
 
 
 def restore_page(db: Session, page_id: str, actor: str = "Current User", actor_metadata: dict | None = None) -> dict | None:
-    page = get_page_by_id(db, page_id)
+    page = get_page_by_id(db, page_id, include_archived=True)
     if not page:
         return None
     page.status = "draft"

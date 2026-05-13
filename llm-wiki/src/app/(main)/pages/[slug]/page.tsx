@@ -449,7 +449,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               </button>
             ) : (
               <button
-                onClick={() => archiveMutation.mutate(page.id)}
+                onClick={() => archiveMutation.mutate(page.id, { onSuccess: () => router.push('/trash') })}
                 disabled={archiveMutation.isPending || !canEdit}
                 className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
               >

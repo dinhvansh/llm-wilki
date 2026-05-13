@@ -82,7 +82,7 @@ INTENT_PRIORITY = (
 )
 
 SEARCHABLE_SOURCE_STATUSES = {"indexed", "completed"}
-SEARCHABLE_PAGE_STATUSES = {"published", "in_review", "archived"}
+SEARCHABLE_PAGE_STATUSES = {"published", "in_review"}
 
 
 def _searchable_source_filter(query):

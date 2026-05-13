@@ -695,7 +695,7 @@ def merge_review_item(db: Session, item_id: str, target_page_id: str | None = No
     return {
         "success": True,
         "mergedPage": get_page_by_slug(db, target_page.slug),
-        "archivedPage": get_page_by_slug(db, source_page.slug),
+        "archivedPage": get_page_by_slug(db, source_page.slug, include_archived=True),
         "targetPageId": target_page.id,
     }
 

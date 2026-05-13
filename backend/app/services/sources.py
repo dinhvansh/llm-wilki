@@ -340,8 +340,10 @@ def list_sources(db: Session, page: int = 1, page_size: int = 20, status: str | 
     return _paginate([_serialize_source(item) for item in items], page, page_size)
 
 
-def get_source_by_id(db: Session, source_id: str, actor=None) -> dict | None:
+def get_source_by_id(db: Session, source_id: str, actor=None, include_archived: bool = False) -> dict | None:
     source = db.query(Source).filter(Source.id == source_id).first()
+    if source and not include_archived and bool((source.metadata_json or {}).get("archived")):
+        return None
     if source and actor is not None and not can_access_collection_id(actor, source.collection_id):
         return None
     return _serialize_source(source) if source else None
