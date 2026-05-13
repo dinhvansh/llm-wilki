@@ -1,5 +1,5 @@
 'use client'
-import { useDeferredValue, useEffect, useRef, useState, use, type ClipboardEvent } from 'react'
+import { useDeferredValue, useEffect, useRef, useState, use, type ClipboardEvent, type DragEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -21,6 +21,7 @@ import {
   Layers, Tag, FileText, Link2, CheckCircle,
   PanelLeft, Search, Star, CalendarDays, ListChecks,
   Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check, ImagePlus, Plus, Trash2,
+  Heading2, List, ListTodo, Quote, Save, X,
 } from 'lucide-react'
 
 type SavedView = 'all' | 'drafts' | 'review' | 'stale' | 'source-linked'
@@ -54,6 +55,8 @@ type UploadedPageAsset = {
   contentType: string
   size: number
 }
+
+type AppendableBlockKind = 'paragraph' | 'heading' | 'bullet_list' | 'todo_list' | 'quote'
 
 function listValueToLines(items: string[]) {
   return items.join('\n')
@@ -200,6 +203,17 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     })
   }
 
+  const uploadPageAsset = async (file: File) => {
+    const formData = new FormData()
+    const extension = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1] || 'png'
+    const safeName = file.name?.trim() || `clipboard-${Date.now()}.${extension}`
+    formData.append('file', file, safeName)
+    return apiRequest<UploadedPageAsset>('/pages/assets', {
+      method: 'POST',
+      body: formData,
+    })
+  }
+
   const handleEditorPaste = (blockId: string) => async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find(item => item.type.startsWith('image/'))
     if (!imageItem) return
@@ -211,15 +225,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     setImagePasteState('pasting')
 
     try {
-      const formData = new FormData()
-      const extension = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1] || 'png'
-      const safeName = file.name?.trim() || `clipboard-${Date.now()}.${extension}`
-      formData.append('file', file, safeName)
-
-      const uploadedAsset = await apiRequest<UploadedPageAsset>('/pages/assets', {
-        method: 'POST',
-        body: formData,
-      })
+      const uploadedAsset = await uploadPageAsset(file)
 
       const plainText = event.clipboardData.getData('text/plain').trim()
       setEditBlocks(current => {
@@ -252,6 +258,31 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     }
   }
 
+  const handleEditorDrop = (blockId: string) => async (event: DragEvent<HTMLDivElement>) => {
+    const imageFiles = Array.from(event.dataTransfer.files).filter(file => file.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+
+    event.preventDefault()
+    setActiveBlockId(blockId)
+    setImagePasteState('pasting')
+
+    try {
+      const uploadedAssets = await Promise.all(imageFiles.map(uploadPageAsset))
+      setEditBlocks(current => {
+        const base = normalizePageBlocks(current)
+        const index = base.findIndex(block => block.id === blockId)
+        const imageBlocks = uploadedAssets.map(asset => createImageBlock(asset.url, asset.filename))
+        if (index === -1) return [...base, ...imageBlocks]
+        return [...base.slice(0, index + 1), ...imageBlocks, ...base.slice(index + 1)]
+      })
+      setImagePasteState('ready')
+    } catch {
+      setImagePasteState('failed')
+    } finally {
+      window.setTimeout(() => setImagePasteState('idle'), 2200)
+    }
+  }
+
   const updateBlock = (blockId: string, updater: (block: PageBlock) => PageBlock) => {
     setEditBlocks(current => normalizePageBlocks(current).map(block => (block.id === blockId ? updater(block) : block)))
   }
@@ -263,13 +294,21 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     })
   }
 
-  const appendBlock = (kind: 'paragraph' | 'heading' | 'todo_list') => {
+  const appendBlock = (kind: AppendableBlockKind) => {
     if (kind === 'heading') {
       setEditBlocks(current => [...normalizePageBlocks(current), createHeadingBlock('New section', 2)])
       return
     }
+    if (kind === 'bullet_list') {
+      setEditBlocks(current => [...normalizePageBlocks(current), { id: `blk-${Date.now()}`, type: 'bullet_list', items: [''] }])
+      return
+    }
     if (kind === 'todo_list') {
       setEditBlocks(current => [...normalizePageBlocks(current), { id: `blk-${Date.now()}`, type: 'todo_list', items: [{ text: '', checked: false }] }])
+      return
+    }
+    if (kind === 'quote') {
+      setEditBlocks(current => [...normalizePageBlocks(current), { id: `blk-${Date.now()}`, type: 'quote', text: '' }])
       return
     }
     setEditBlocks(current => [...normalizePageBlocks(current), createParagraphBlock('')])
@@ -473,7 +512,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
         </button>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={cn('mx-auto p-6', isEditing ? 'max-w-4xl' : 'max-w-3xl')}>
+          <div className={cn('mx-auto px-5 py-6 md:px-10', isEditing ? 'max-w-4xl' : 'max-w-3xl')}>
             <div className="mb-4">
               <div className="flex flex-wrap gap-1.5">
                 {page.tags.map(tag => (
@@ -495,62 +534,119 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
             </div>
 
             {isEditing ? (
-              <div className="space-y-5">
-                <div className="space-y-3 border-b border-border/70 pb-4">
-                  <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Draft note</div>
-                  <h2 className="text-4xl font-semibold tracking-tight">{page.title}</h2>
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                    <span>In {collectionName}</span>
-                    <span>Version {page.currentVersion}</span>
+              <div className="space-y-6">
+                <div className="space-y-3 pb-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>{collectionName}</span>
+                    <span>v{page.currentVersion}</span>
                     <Link
                       href={`/ask?pageId=${encodeURIComponent(page.id)}&pageTitle=${encodeURIComponent(page.title)}&pageSummary=${encodeURIComponent(page.summary ?? '')}`}
                       className="text-primary hover:underline"
                     >
-                      Ask AI about this note
+                      Ask AI
                     </Link>
                   </div>
+                  <h1 className="text-5xl font-semibold leading-tight tracking-normal">{page.title}</h1>
                 </div>
 
-                <div className="flex flex-wrap gap-2 border-b border-border/70 pb-4">
+                <div className="sticky top-0 z-10 -mx-2 flex flex-wrap items-center gap-1 border-b border-border/60 bg-background/95 px-2 py-2 backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => appendBlock('paragraph')}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="Paragraph"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appendBlock('heading')}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="Heading"
+                  >
+                    <Heading2 className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appendBlock('bullet_list')}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="Bullet list"
+                  >
+                    <List className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appendBlock('todo_list')}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="Todo list"
+                  >
+                    <ListTodo className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appendBlock('quote')}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="Quote"
+                  >
+                    <Quote className="h-4 w-4" />
+                  </button>
+                  <div className="mx-1 h-5 w-px bg-border" />
                   {WORKSPACE_INSERTS.map(block => (
                     <button
                       key={block.label}
                       type="button"
                       onClick={() => insertIntoEditor(block.content)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
+                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                     >
-                      <Wand2 className="h-3.5 w-3.5 text-primary" />
+                      <Wand2 className="h-3.5 w-3.5" />
                       {block.label}
                     </button>
                   ))}
-                </div>
-
-                <div className="rounded-md border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  Tip: this editor stores note blocks directly. Paste screenshots into a text block, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    <Edit3 className="h-3.5 w-3.5" />
-                    Edit
+                  <div className="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditing(false)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                      title="Cancel"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editMarkdown, contentJson: normalizePageBlocks(editBlocks) }, { onSuccess: () => setIsEditing(false) })}
+                      disabled={updateMutation.isPending || !canEdit}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                    >
+                      {updateMutation.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      Save
+                    </button>
                   </div>
-                  <div className="space-y-3">
+                </div>
+
+                <div className="space-y-1 pb-24">
+                  <div className="space-y-1">
                     {editBlocks.map(block => (
-                      <div key={block.id} className="rounded-xl border border-border bg-background p-4 shadow-sm">
-                        <div className="mb-3 flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                          <span>{block.type.replace('_', ' ')}</span>
-                          <button type="button" onClick={() => removeBlock(block.id)} className="inline-flex items-center gap-1 text-xs hover:text-foreground">
+                      <div
+                        key={block.id}
+                        onDrop={handleEditorDrop(block.id)}
+                        onDragOver={event => event.preventDefault()}
+                        className={cn(
+                          'group relative -mx-8 rounded-md px-8 py-1 transition-colors hover:bg-muted/30',
+                          activeBlockId === block.id && 'bg-muted/20',
+                        )}
+                      >
+                        <div className="absolute -left-1 top-2 hidden items-center gap-1 text-muted-foreground group-hover:flex">
+                          <button type="button" onClick={() => removeBlock(block.id)} className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-accent hover:text-foreground" title="Remove block">
                             <Trash2 className="h-3.5 w-3.5" />
-                            Remove
                           </button>
                         </div>
 
                         {block.type === 'heading' && (
-                          <div className="space-y-2">
+                          <div className="flex items-start gap-3">
                             <select
                               value={block.level}
                               onChange={event => updateBlock(block.id, current => current.type === 'heading' ? { ...current, level: Number(event.target.value) } : current)}
-                              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                              className="mt-2 h-7 rounded-md border border-transparent bg-transparent px-1 text-xs text-muted-foreground hover:border-input hover:bg-background"
                             >
                               {[1, 2, 3, 4].map(level => <option key={level} value={level}>Heading {level}</option>)}
                             </select>
@@ -559,7 +655,10 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                               value={block.text}
                               onFocus={() => setActiveBlockId(block.id)}
                               onChange={event => updateBlock(block.id, current => current.type === 'heading' ? { ...current, text: event.target.value } : current)}
-                              className="w-full border-0 bg-transparent p-0 text-3xl font-semibold tracking-tight outline-none"
+                              className={cn(
+                                'w-full border-0 bg-transparent p-0 font-semibold tracking-normal outline-none placeholder:text-muted-foreground/50',
+                                block.level === 1 ? 'text-4xl leading-tight' : block.level === 2 ? 'text-3xl leading-tight' : 'text-2xl leading-snug',
+                              )}
                               placeholder="Section title"
                             />
                           </div>
@@ -572,8 +671,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                             onFocus={() => setActiveBlockId(block.id)}
                             onChange={event => updateBlock(block.id, current => current.type === 'paragraph' ? { ...current, text: event.target.value } : current)}
                             onPaste={handleEditorPaste(block.id)}
-                            className="min-h-28 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
-                            placeholder="Write a paragraph..."
+                            className="min-h-9 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-base leading-7 outline-none placeholder:text-muted-foreground/50"
+                            placeholder="Write, paste, or drop an image..."
                           />
                         )}
 
@@ -584,7 +683,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                             onFocus={() => setActiveBlockId(block.id)}
                             onChange={event => updateBlock(block.id, current => current.type === 'quote' ? { ...current, text: event.target.value } : current)}
                             onPaste={handleEditorPaste(block.id)}
-                            className="min-h-24 w-full resize-y border-l-2 border-primary/40 bg-transparent pl-4 text-base italic leading-7 outline-none"
+                            className="min-h-9 w-full resize-none overflow-hidden border-l-2 border-primary/40 bg-transparent pl-4 text-base italic leading-7 outline-none placeholder:text-muted-foreground/50"
                             placeholder="Quoted note..."
                           />
                         )}
@@ -594,8 +693,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                             value={listValueToLines(block.items)}
                             onFocus={() => setActiveBlockId(block.id)}
                             onChange={event => updateBlock(block.id, current => current.type === 'bullet_list' ? { ...current, items: linesToListValue(event.target.value) } : current)}
-                            className="min-h-24 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
-                            placeholder="One bullet per line"
+                            className="min-h-9 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-base leading-7 outline-none placeholder:text-muted-foreground/50"
+                            placeholder="- One bullet per line"
                           />
                         )}
 
@@ -604,64 +703,34 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                             value={todoItemsToText(block.items)}
                             onFocus={() => setActiveBlockId(block.id)}
                             onChange={event => updateBlock(block.id, current => current.type === 'todo_list' ? { ...current, items: textToTodoItems(event.target.value) } : current)}
-                            className="min-h-24 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
+                            className="min-h-9 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-base leading-7 outline-none placeholder:text-muted-foreground/50"
                             placeholder="- [ ] Follow up"
                           />
                         )}
 
                         {block.type === 'image' && (
-                          <div className="space-y-3">
-                            <div className="relative h-[28rem] w-full overflow-hidden rounded-lg border border-border bg-muted/20">
+                          <figure className="my-4 space-y-2">
+                            <div className="relative h-[28rem] w-full overflow-hidden rounded-md bg-muted/20">
                               <Image src={block.url} alt={block.caption || block.alt || 'Note image'} fill className="object-contain" unoptimized />
                             </div>
                             <input
                               value={block.caption || ''}
                               onChange={event => updateBlock(block.id, current => current.type === 'image' ? { ...current, caption: event.target.value, alt: event.target.value } : current)}
-                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                              placeholder="Add an image caption"
+                              className="w-full border-0 bg-transparent px-1 text-center text-sm text-muted-foreground outline-none placeholder:text-muted-foreground/50"
+                              placeholder="Caption"
                             />
-                          </div>
+                          </figure>
                         )}
                       </div>
                     ))}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => appendBlock('paragraph')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
-                      <Plus className="h-3.5 w-3.5" />
-                      Paragraph
-                    </button>
-                    <button type="button" onClick={() => appendBlock('heading')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
-                      <Plus className="h-3.5 w-3.5" />
-                      Heading
-                    </button>
-                    <button type="button" onClick={() => appendBlock('todo_list')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
-                      <Plus className="h-3.5 w-3.5" />
-                      Todo list
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
                     <ImagePlus className="h-3.5 w-3.5 text-primary" />
                     {imagePasteState === 'pasting' && <span>Uploading clipboard image...</span>}
                     {imagePasteState === 'ready' && <span>Clipboard text and image were inserted into the draft.</span>}
                     {imagePasteState === 'failed' && <span>Could not upload the clipboard image.</span>}
-                    {imagePasteState === 'idle' && <span>Paste text, screenshots, or both inside a text block with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
+                    {imagePasteState === 'idle' && <span>Paste or drop images into the note.</span>}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editMarkdown, contentJson: normalizePageBlocks(editBlocks) }, { onSuccess: () => setIsEditing(false) })}
-                    disabled={updateMutation.isPending || !canEdit}
-                    className="rounded-full border border-input px-4 py-2 text-sm hover:bg-accent"
-                  >
-                    {updateMutation.isPending ? 'Saving...' : 'Save Draft'}
-                  </button>
-                  <button
-                    onClick={() => setIsEditing(false)}
-                    className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
                 </div>
               </div>
             ) : (
