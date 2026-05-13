@@ -14,7 +14,7 @@ import { useCreateNote } from '@/hooks/use-notes'
 import { useAuth } from '@/providers/auth-provider'
 import {
   Send, BookOpen, FileText, Layers,
-  Lightbulb, RefreshCw, Plus, Trash2, ShieldCheck, AlertTriangle
+  Lightbulb, RefreshCw, Plus, Trash2, ShieldCheck, AlertTriangle, Search
 } from 'lucide-react'
 import type { AskResponse, AskScope } from '@/lib/types'
 import Link from 'next/link'
@@ -520,6 +520,9 @@ function AskAIPageInner() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [chatSearch, setChatSearch] = useState('')
+  const [showAllHistory, setShowAllHistory] = useState(false)
+  const [focusedAnswerId, setFocusedAnswerId] = useState<string | null>(null)
   const searchParams = useSearchParams()
   const [activeScope, setActiveScope] = useState<AskScope | null>(null)
   const { data: sessions } = useChatSessions()
@@ -531,7 +534,7 @@ function AskAIPageInner() {
     collectionId: activeScope?.type === 'collection' ? activeScope.id : null,
     pageId: activeScope?.type === 'page' ? activeScope.id : null,
   })
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const latestAnswerRef = useRef<HTMLDivElement>(null)
 
   const ask = async (question: string) => {
     if (!question.trim()) return
@@ -548,6 +551,8 @@ function AskAIPageInner() {
         setActiveScope(response.scope)
       }
       setMessages(prev => [...prev, { id: response.id, role: 'assistant', response }])
+      setFocusedAnswerId(response.id)
+      setShowAllHistory(false)
     } catch {}
   }
 
@@ -575,6 +580,8 @@ function AskAIPageInner() {
       return items
     }, [])
     setMessages(restoredMessages)
+    setShowAllHistory(false)
+    setFocusedAnswerId(null)
     const latestScopedResponse = [...selectedSession.messages]
       .reverse()
       .find(message => message.role === 'assistant' && message.response?.scope)
@@ -586,8 +593,9 @@ function AskAIPageInner() {
   }, [searchParams, selectedSession])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (!focusedAnswerId) return
+    latestAnswerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [focusedAnswerId])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -601,6 +609,24 @@ function AskAIPageInner() {
   })
 
   const starterPrompts = starterPromptsForScope(activeScope)
+  const normalizedChatSearch = chatSearch.trim().toLowerCase()
+  const matchingMessages = normalizedChatSearch
+    ? messages.filter(message => {
+        const text = message.role === 'user'
+          ? message.question ?? ''
+          : [
+              message.response?.question,
+              message.response?.answer,
+              message.response?.citations.map(citation => `${citation.sourceTitle} ${citation.snippet}`).join(' '),
+            ].filter(Boolean).join(' ')
+        return text.toLowerCase().includes(normalizedChatSearch)
+      })
+    : messages
+  const recentLimit = 8
+  const visibleMessages = normalizedChatSearch || showAllHistory
+    ? matchingMessages
+    : matchingMessages.slice(-recentLimit)
+  const hiddenMessageCount = Math.max(0, matchingMessages.length - visibleMessages.length)
 
   return (
     <div className="flex flex-col h-full">
@@ -625,6 +651,9 @@ function AskAIPageInner() {
                 setSelectedSessionId(null)
                 setMessages([])
                 setInput('')
+                setChatSearch('')
+                setShowAllHistory(false)
+                setFocusedAnswerId(null)
               }}
               className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
@@ -654,6 +683,9 @@ function AskAIPageInner() {
                         if (selectedSessionId === session.id) {
                           setSelectedSessionId(null)
                           setMessages([])
+                          setChatSearch('')
+                          setShowAllHistory(false)
+                          setFocusedAnswerId(null)
                         }
                       }}
                       className="rounded-md p-1 text-muted-foreground opacity-0 hover:bg-background hover:text-destructive group-hover:opacity-100"
@@ -671,6 +703,48 @@ function AskAIPageInner() {
         </aside>
 
         <div className="min-h-0 flex flex-col">
+        {messages.length > 0 && (
+          <div className="border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+            <div className="mx-auto flex max-w-3xl flex-col gap-2 md:flex-row md:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={chatSearch}
+                  onChange={event => {
+                    setChatSearch(event.target.value)
+                    setShowAllHistory(true)
+                  }}
+                  placeholder="Search this conversation..."
+                  className="h-9 w-full rounded-full border border-input bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{visibleMessages.length}/{matchingMessages.length} shown</span>
+                {hiddenMessageCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllHistory(true)}
+                    className="rounded-full border border-border px-3 py-1.5 text-foreground hover:bg-accent"
+                  >
+                    Show {hiddenMessageCount} older
+                  </button>
+                )}
+                {(showAllHistory || chatSearch) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChatSearch('')
+                      setShowAllHistory(false)
+                    }}
+                    className="rounded-full border border-border px-3 py-1.5 text-foreground hover:bg-accent"
+                  >
+                    Recent only
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Messages area */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
           <div className="mx-auto max-w-3xl">
@@ -759,10 +833,29 @@ function AskAIPageInner() {
                 </div>
               </div>
             </div>
-          ) : (
+                  ) : (
             <div className="max-w-3xl mx-auto space-y-6">
-              {messages.map(msg => (
-                <div key={msg.id}>
+              {visibleMessages.length === 0 && normalizedChatSearch ? (
+                <div className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
+                  No messages match "{chatSearch}".
+                </div>
+              ) : null}
+              {!normalizedChatSearch && hiddenMessageCount > 0 && (
+                <div className="sticky top-0 z-10 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllHistory(true)}
+                    className="rounded-full border border-border bg-background px-4 py-2 text-xs shadow-sm hover:bg-accent"
+                  >
+                    Showing latest {recentLimit} messages. Show {hiddenMessageCount} older messages
+                  </button>
+                </div>
+              )}
+              {visibleMessages.map(msg => (
+                <div
+                  key={msg.id}
+                  ref={msg.id === focusedAnswerId ? latestAnswerRef : undefined}
+                >
                   {msg.role === 'user' ? (
                     <div className="flex justify-end">
                       <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-xl">
@@ -770,7 +863,7 @@ function AskAIPageInner() {
                       </div>
                     </div>
                   ) : msg.response ? (
-                    <div className="bg-card border border-border rounded-xl p-5">
+                    <div className="bg-card border border-border rounded-xl p-5 scroll-mt-6">
                       <div className="flex items-center gap-2 mb-4 text-xs text-muted-foreground">
                         <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center">
                           <span className="text-primary font-bold">W</span>
@@ -801,8 +894,6 @@ function AskAIPageInner() {
                   <p className="text-sm text-destructive">{error.message}</p>
                 </div>
               )}
-
-              <div ref={messagesEndRef} />
             </div>
           )}
         </div>

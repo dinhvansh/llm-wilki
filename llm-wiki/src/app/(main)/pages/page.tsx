@@ -1,30 +1,96 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
 import { StatusBadge } from '@/components/data-display/status-badge'
 import { EmptyState } from '@/components/data-display/empty-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { formatRelativeTime, cn } from '@/lib/utils'
-import { useComposePage, usePages } from '@/hooks/use-pages'
+import { useComposePage, usePages, useUpdatePage } from '@/hooks/use-pages'
 import { useCollections } from '@/hooks/use-collections'
 import { PAGE_TYPE_CONFIG, PAGE_STATUS_CONFIG } from '@/lib/constants'
 import type { PageStatus, PageType } from '@/lib/constants'
 import { Input } from '@/components/ui/input'
-import { Search, LayoutGrid, List, Plus } from 'lucide-react'
+import { Search, LayoutGrid, List, Plus, Sparkles, X, FileText, BookOpen, CheckSquare, Lightbulb } from 'lucide-react'
 
 type ViewMode = 'grid' | 'table'
 type SortKey = 'updated' | 'title' | 'status' | 'type'
+type DraftTemplate = 'blank' | 'meeting' | 'doc' | 'decision'
+
+const draftTemplates: Array<{
+  id: DraftTemplate
+  title: string
+  description: string
+  icon: typeof FileText
+  sections: string[]
+}> = [
+  {
+    id: 'blank',
+    title: 'Blank note',
+    description: 'A clean page for quick thinking.',
+    icon: FileText,
+    sections: ['Notes', 'Next steps'],
+  },
+  {
+    id: 'doc',
+    title: 'Document notes',
+    description: 'Summarize a source or internal document.',
+    icon: BookOpen,
+    sections: ['Summary', 'Key points', 'Open questions', 'Sources to attach'],
+  },
+  {
+    id: 'meeting',
+    title: 'Meeting note',
+    description: 'Capture decisions, action items, and context.',
+    icon: CheckSquare,
+    sections: ['Context', 'Discussion notes', 'Decisions', 'Action items'],
+  },
+  {
+    id: 'decision',
+    title: 'Decision log',
+    description: 'Record options, tradeoffs, and final choice.',
+    icon: Lightbulb,
+    sections: ['Problem', 'Options considered', 'Decision', 'Rationale', 'Follow-up'],
+  },
+]
+
+function buildDraftMarkdown(title: string, template: (typeof draftTemplates)[number], notes: string, collectionName?: string) {
+  const cleanNotes = notes.trim()
+  return [
+    `# ${title}`,
+    '',
+    collectionName ? `> Collection: ${collectionName}` : '> Draft page',
+    '',
+    ...template.sections.flatMap(section => [
+      `## ${section}`,
+      '',
+      section === 'Notes' && cleanNotes ? cleanNotes : '- ',
+      '',
+    ]),
+    cleanNotes && template.id !== 'blank' ? '## Raw notes' : '',
+    cleanNotes && template.id !== 'blank' ? '' : '',
+    cleanNotes && template.id !== 'blank' ? cleanNotes : '',
+  ].filter(line => line !== '').join('\n')
+}
 
 export default function PagesPage() {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<PageStatus | ''>('')
   const [typeFilter, setTypeFilter] = useState<PageType | ''>('')
   const [collectionFilter, setCollectionFilter] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [sortKey, setSortKey] = useState<SortKey>('updated')
+  const [isComposerOpen, setIsComposerOpen] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [draftNotes, setDraftNotes] = useState('')
+  const [draftTemplate, setDraftTemplate] = useState<DraftTemplate>('doc')
+  const [draftCollectionId, setDraftCollectionId] = useState('')
+  const [composerError, setComposerError] = useState<string | null>(null)
   const composeMutation = useComposePage()
+  const updatePageMutation = useUpdatePage()
   const { data: collections } = useCollections()
 
   useEffect(() => {
@@ -41,6 +107,31 @@ export default function PagesPage() {
 
   const pages = data?.data ?? []
   const counts = data?.total ?? 0
+  const selectedTemplate = draftTemplates.find(template => template.id === draftTemplate) ?? draftTemplates[0]
+  const selectedCollectionName = collections?.find(collection => collection.id === draftCollectionId)?.name
+  const isCreatingDraft = composeMutation.isPending || updatePageMutation.isPending
+
+  const createDraft = async () => {
+    const title = draftTitle.trim()
+    if (!title) {
+      setComposerError('Page title is required.')
+      return
+    }
+    setComposerError(null)
+    try {
+      const page = await composeMutation.mutateAsync(title)
+      const contentMd = buildDraftMarkdown(title, selectedTemplate, draftNotes, selectedCollectionName)
+      await updatePageMutation.mutateAsync({ pageId: page.id, contentMd })
+      setIsComposerOpen(false)
+      setDraftTitle('')
+      setDraftNotes('')
+      setDraftTemplate('doc')
+      setDraftCollectionId('')
+      router.push(`/pages/${page.slug}`)
+    } catch (error) {
+      setComposerError((error as Error)?.message ?? 'Failed to create page draft.')
+    }
+  }
 
   return (
     <div>
@@ -49,18 +140,139 @@ export default function PagesPage() {
         description="Browse and manage wiki pages"
         actions={
           <button
-            onClick={() => {
-              const topic = window.prompt('Page topic')
-              if (topic?.trim()) composeMutation.mutate(topic.trim())
-            }}
-            disabled={composeMutation.isPending}
+            onClick={() => setIsComposerOpen(true)}
+            disabled={isCreatingDraft}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
-            {composeMutation.isPending ? 'Creating...' : 'New Page'}
+            {isCreatingDraft ? 'Creating...' : 'New Page'}
           </button>
         }
       />
+
+      {isComposerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+            <div className="flex items-start justify-between border-b border-border p-5">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
+                  <Sparkles className="h-4 w-4" />
+                  Notion-style draft composer
+                </div>
+                <h2 className="mt-2 text-xl font-semibold">Create a page for notes, docs, or decisions</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Pick a structure, add rough notes, then continue editing in the page editor.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsComposerOpen(false)}
+                className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid max-h-[calc(90vh-88px)] overflow-y-auto lg:grid-cols-[1fr_320px]">
+              <div className="space-y-5 p-5">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Title</label>
+                  <input
+                    value={draftTitle}
+                    onChange={event => setDraftTitle(event.target.value)}
+                    placeholder="Untitled page"
+                    className="mt-2 w-full border-0 bg-transparent px-0 text-3xl font-semibold outline-none placeholder:text-muted-foreground/50"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Template</label>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    {draftTemplates.map(template => {
+                      const Icon = template.icon
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => setDraftTemplate(template.id)}
+                          className={cn(
+                            'rounded-xl border p-3 text-left transition-colors',
+                            draftTemplate === template.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent',
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-4 w-4 text-primary" />
+                            <span className="text-sm font-medium">{template.title}</span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{template.description}</p>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Rough notes</label>
+                  <textarea
+                    value={draftNotes}
+                    onChange={event => setDraftNotes(event.target.value)}
+                    placeholder="Paste notes, context, source reminders, or questions here..."
+                    className="mt-2 min-h-40 w-full resize-y rounded-xl border border-input bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Collection context</label>
+                  <select
+                    value={draftCollectionId}
+                    onChange={event => setDraftCollectionId(event.target.value)}
+                    className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="">Standalone draft</option>
+                    {collections?.map(collection => (
+                      <option key={collection.id} value={collection.id}>{collection.name}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This adds context to the draft body. You can assign the final page to a collection after opening it.
+                  </p>
+                </div>
+
+                {composerError && (
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {composerError}
+                  </div>
+                )}
+              </div>
+
+              <aside className="border-t border-border bg-muted/30 p-5 lg:border-l lg:border-t-0">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preview outline</div>
+                <div className="mt-3 rounded-xl border border-border bg-background p-4">
+                  <div className="text-lg font-semibold">{draftTitle.trim() || 'Untitled page'}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{selectedTemplate.title}</div>
+                  <div className="mt-4 space-y-2">
+                    {selectedTemplate.sections.map(section => (
+                      <div key={section} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
+                        {section}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={createDraft}
+                  disabled={isCreatingDraft}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {isCreatingDraft ? 'Creating draft...' : 'Create and open'}
+                </button>
+              </aside>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="p-6 space-y-4">
         {/* Toolbar */}
@@ -135,7 +347,7 @@ export default function PagesPage() {
              icon="file-text"
              title="No pages found"
              description="Pages will be auto-generated from your sources, or you can create them manually."
-             action={<button className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90">
+             action={<button onClick={() => setIsComposerOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90">
                <Plus className="w-4 h-4" /> Create First Page
              </button>}
            />
