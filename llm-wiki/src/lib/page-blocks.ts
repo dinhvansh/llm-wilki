@@ -199,15 +199,6 @@ export function markdownToPageBlocks(markdown?: string): PageBlock[] {
   return blocks.length ? blocks : [createParagraphBlock('')]
 }
 
-function directText(element: Element) {
-  return Array.from(element.childNodes)
-    .filter(node => node.nodeType === Node.TEXT_NODE)
-    .map(node => node.textContent?.replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .join(' ')
-    .trim()
-}
-
 function absoluteImageSrc(src: string) {
   if (!src) return ''
   try {
@@ -221,6 +212,10 @@ export function htmlToPageBlocks(html: string): PageBlock[] {
   if (typeof window === 'undefined' || !html.trim()) return []
   const document = new DOMParser().parseFromString(html, 'text/html')
   const blocks: PageBlock[] = []
+  const blockTags = new Set(['article', 'aside', 'blockquote', 'div', 'figcaption', 'figure', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'ul'])
+
+  const hasNestedBlockChildren = (element: Element) =>
+    Array.from(element.children).some(child => blockTags.has(child.tagName.toLowerCase()))
 
   const pushTextAndImages = (element: Element) => {
     const text = element.textContent?.replace(/\s+/g, ' ').trim()
@@ -267,11 +262,40 @@ export function htmlToPageBlocks(html: string): PageBlock[] {
       if (text) blocks.push({ id: blockId(), type: 'quote', text })
       return
     }
-    if (tag === 'br') {
+    if (tag === 'figure') {
+      const image = element.querySelector('img')
+      if (image) {
+        const src = absoluteImageSrc(image.getAttribute('src') || '')
+        if (src) {
+          const caption = element.querySelector('figcaption')?.textContent?.replace(/\s+/g, ' ').trim()
+            || image.getAttribute('alt')
+            || image.getAttribute('title')
+            || ''
+          blocks.push(createImageBlock(src, caption))
+        }
+      } else if (!hasNestedBlockChildren(element)) {
+        const text = element.textContent?.replace(/\s+/g, ' ').trim()
+        if (text) blocks.push(createParagraphBlock(text))
+      } else {
+        Array.from(element.children).forEach(visit)
+      }
       return
     }
-    const text = directText(element)
-    if (text) blocks.push(createParagraphBlock(text))
+    if (tag === 'div' || tag === 'main' || tag === 'header' || tag === 'footer' || tag === 'aside' || tag === 'nav') {
+      if (hasNestedBlockChildren(element)) {
+        Array.from(element.children).forEach(visit)
+      } else {
+        pushTextAndImages(element)
+      }
+      return
+    }
+    if (tag === 'br' || tag === 'span' || tag === 'a' || tag === 'strong' || tag === 'em' || tag === 'b' || tag === 'i' || tag === 'u' || tag === 'small' || tag === 'mark' || tag === 'sup' || tag === 'sub') {
+      return
+    }
+    if (!hasNestedBlockChildren(element)) {
+      pushTextAndImages(element)
+      return
+    }
     Array.from(element.children).forEach(visit)
   }
 
