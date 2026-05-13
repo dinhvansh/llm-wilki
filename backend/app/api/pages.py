@@ -35,6 +35,9 @@ router = APIRouter()
 class ComposePayload(BaseModel):
     topic: str
     sourceIds: list[str] = []
+    contentMd: str | None = None
+    collectionId: str | None = None
+    pageType: str = "summary"
 
 
 class UpdatePagePayload(BaseModel):
@@ -151,7 +154,14 @@ async def get_insert_helpers(page_id: str, sourceId: Optional[str] = None, chunk
 
 @router.post("/compose", response_model=PageOut)
 async def compose_page_route(payload: ComposePayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
-    return compose_page(db, payload.topic, payload.sourceIds)
+    return compose_page(
+        db,
+        payload.topic,
+        payload.sourceIds,
+        content_md=payload.contentMd,
+        collection_id=payload.collectionId,
+        page_type=payload.pageType,
+    )
 
 
 @router.post("/from-chunks", response_model=PageOut)

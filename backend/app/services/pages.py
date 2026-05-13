@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.core.ingest import build_tags, summarize_text
+from app.core.ingest import SENTENCE_RE, build_tags, summarize_text
 from app.models import Claim, GlossaryTerm, Page, PageClaimLink, PageEntityLink, PageLink, PageSourceLink, PageVersion, Source, SourceChunk, TimelineEvent
 from app.services.audit import create_audit_log, list_audit_logs
 from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
@@ -23,6 +23,19 @@ def _iso(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _lightweight_summary(text: str, fallback_title: str) -> str:
+    cleaned = "\n".join(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#") and not line.strip().startswith(">")
+    )
+    sentences = [sentence.strip() for sentence in SENTENCE_RE.split(cleaned) if sentence.strip()]
+    summary = " ".join(sentences[:2]).strip() if sentences else ""
+    if summary:
+        return summary[:320]
+    return f"Draft page for {fallback_title.strip()}".strip()
 
 
 def _page_source_map(db: Session, page_ids: list[str]) -> dict[str, list[str]]:
@@ -628,7 +641,15 @@ def build_editor_insert_helpers(db: Session, page_id: str, source_id: str | None
     }
 
 
-def compose_page(db: Session, topic: str, source_ids: list[str] | None = None) -> dict:
+def compose_page(
+    db: Session,
+    topic: str,
+    source_ids: list[str] | None = None,
+    *,
+    content_md: str | None = None,
+    collection_id: str | None = None,
+    page_type: str = "summary",
+) -> dict:
     normalized_topic = topic.strip()
     slug = "-".join(normalized_topic.lower().split())
     unique_slug = slug
@@ -638,19 +659,19 @@ def compose_page(db: Session, topic: str, source_ids: list[str] | None = None) -
         unique_slug = f"{slug}-{suffix}"
 
     source_ids = [source_id for source_id in (source_ids or []) if source_id]
-    collection_id = None
-    if source_ids:
+    resolved_collection_id = collection_id
+    if source_ids and resolved_collection_id is None:
         linked_source = db.query(PageSourceLink).filter(PageSourceLink.source_id.in_(source_ids)).first()
         if linked_source:
             linked_page = db.query(Page).filter(Page.id == linked_source.page_id).first()
-            collection_id = linked_page.collection_id if linked_page else None
-        if collection_id is None:
+            resolved_collection_id = linked_page.collection_id if linked_page else None
+        if resolved_collection_id is None:
             from app.models import Source
 
             source_record = db.query(Source).filter(Source.id.in_(source_ids), Source.collection_id.is_not(None)).first()
-            collection_id = source_record.collection_id if source_record else None
+            resolved_collection_id = source_record.collection_id if source_record else None
     source_section = "\n".join(f"- Source: {source_id}" for source_id in source_ids) if source_ids else "- No linked sources yet."
-    content_md = "\n".join(
+    draft_content_md = content_md.strip() if content_md and content_md.strip() else "\n".join(
         [
             f"# {normalized_topic}",
             "",
@@ -663,21 +684,25 @@ def compose_page(db: Session, topic: str, source_ids: list[str] | None = None) -
             source_section,
         ]
     )
-    summary, key_facts = summarize_text(normalized_topic, content_md)
+    if content_md and content_md.strip():
+        summary = _lightweight_summary(draft_content_md, normalized_topic)
+        key_facts: list[str] = []
+    else:
+        summary, key_facts = summarize_text(normalized_topic, draft_content_md)
     page = create_page_with_version(
         db,
         title=normalized_topic,
         slug=unique_slug,
         summary=summary,
-        content_md=content_md,
+        content_md=draft_content_md,
         owner="Current User",
-        page_type="summary",
+        page_type=page_type,
         status="draft",
-        tags=build_tags(normalized_topic, content_md),
+        tags=build_tags(normalized_topic, normalized_topic if content_md else draft_content_md),
         key_facts=key_facts,
         related_source_ids=source_ids,
         related_entity_ids=[],
-        collection_id=collection_id,
+        collection_id=resolved_collection_id,
     )
     create_audit_log(
         db,
@@ -686,7 +711,7 @@ def compose_page(db: Session, topic: str, source_ids: list[str] | None = None) -
         object_id=page.id,
         actor="Current User",
         summary=f"Composed draft page `{page.title}`",
-        metadata={"slug": page.slug, "sourceIds": source_ids, "collectionId": collection_id},
+        metadata={"slug": page.slug, "sourceIds": source_ids, "collectionId": resolved_collection_id, "directDraft": bool(content_md)},
     )
     db.commit()
     return get_page_by_slug(db, page.slug)

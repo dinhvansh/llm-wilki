@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/data-display/empty-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { formatRelativeTime, cn } from '@/lib/utils'
-import { useComposePage, usePages, useUpdatePage } from '@/hooks/use-pages'
+import { useComposePage, usePages } from '@/hooks/use-pages'
 import { useCollections } from '@/hooks/use-collections'
 import { PAGE_TYPE_CONFIG, PAGE_STATUS_CONFIG } from '@/lib/constants'
 import type { PageStatus, PageType } from '@/lib/constants'
@@ -90,7 +90,6 @@ export default function PagesPage() {
   const [draftCollectionId, setDraftCollectionId] = useState('')
   const [composerError, setComposerError] = useState<string | null>(null)
   const composeMutation = useComposePage()
-  const updatePageMutation = useUpdatePage()
   const { data: collections } = useCollections()
 
   useEffect(() => {
@@ -109,7 +108,7 @@ export default function PagesPage() {
   const counts = data?.total ?? 0
   const selectedTemplate = draftTemplates.find(template => template.id === draftTemplate) ?? draftTemplates[0]
   const selectedCollectionName = collections?.find(collection => collection.id === draftCollectionId)?.name
-  const isCreatingDraft = composeMutation.isPending || updatePageMutation.isPending
+  const isCreatingDraft = composeMutation.isPending
 
   const createDraft = async () => {
     const title = draftTitle.trim()
@@ -119,9 +118,13 @@ export default function PagesPage() {
     }
     setComposerError(null)
     try {
-      const page = await composeMutation.mutateAsync(title)
       const contentMd = buildDraftMarkdown(title, selectedTemplate, draftNotes, selectedCollectionName)
-      await updatePageMutation.mutateAsync({ pageId: page.id, contentMd })
+      const page = await composeMutation.mutateAsync({
+        topic: title,
+        contentMd,
+        collectionId: draftCollectionId || undefined,
+        pageType: 'summary',
+      })
       setIsComposerOpen(false)
       setDraftTitle('')
       setDraftNotes('')

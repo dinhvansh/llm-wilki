@@ -1,5 +1,5 @@
 'use client'
-import { useDeferredValue, useEffect, useRef, useState, use } from 'react'
+import { useDeferredValue, useEffect, useRef, useState, use, type ClipboardEvent } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
@@ -22,7 +22,7 @@ import {
   Edit3, History, AlertTriangle, RefreshCw,
   Layers, Tag, FileText, Link2, CheckCircle,
   Eye, PanelLeft, PanelRight, Search, Star, CalendarDays, ListChecks,
-  Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check,
+  Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check, ImagePlus,
 } from 'lucide-react'
 
 type SavedView = 'all' | 'drafts' | 'review' | 'stale' | 'source-linked'
@@ -66,6 +66,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const [selectedCitation, setSelectedCitation] = useState<PageCitation | null>(null)
   const [selectedBacklink, setSelectedBacklink] = useState<NonNullable<Page['backlinks']>[number] | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
+  const [imagePasteState, setImagePasteState] = useState<'idle' | 'pasting' | 'ready' | 'failed'>('idle')
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
@@ -86,6 +87,11 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const deferredPageSearch = useDeferredValue(pageSearch)
   const canEdit = hasRole('editor', 'reviewer', 'admin')
 
+  const finishDraftSave = () => {
+    setIsEditing(false)
+    setRightPanelOpen(true)
+  }
+
   useEffect(() => {
     if (!isEditing || !canEdit || !page?.id) return
 
@@ -93,7 +99,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         if (!updateMutation.isPending) {
-          updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })
+          updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: finishDraftSave })
         }
       }
     }
@@ -101,6 +107,11 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [canEdit, editContent, isEditing, page?.id, updateMutation])
+
+  useEffect(() => {
+    if (!page?.id) return
+    setRightPanelOpen(page.status !== 'draft')
+  }, [page?.id, page?.status])
 
   if (isLoading) return <LoadingSpinner label="Loading page..." />
   if (isError) return <ErrorState message={(error as Error)?.message ?? 'Failed to load page'} onRetry={() => refetch()} />
@@ -184,6 +195,33 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     insertIntoEditor(`\n## Source follow-up\n\n- Source: ${sourceTitle}\n- Insight:\n- Open question:\n`)
   }
 
+  const handleEditorPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find(item => item.type.startsWith('image/'))
+    if (!imageItem) return
+
+    const file = imageItem.getAsFile()
+    if (!file) return
+
+    event.preventDefault()
+    setImagePasteState('pasting')
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      const safeName = file.name?.trim() || `clipboard-${Date.now()}.png`
+      insertIntoEditor(`\n![${safeName}](${dataUrl})\n`)
+      setImagePasteState('ready')
+    } catch {
+      setImagePasteState('failed')
+    } finally {
+      window.setTimeout(() => setImagePasteState('idle'), 2200)
+    }
+  }
+
   const statusBanner = page.status === 'stale' ? (
     <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-200 text-red-800 text-sm">
       <AlertTriangle className="w-4 h-4" />
@@ -261,7 +299,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
             </button>
             {page.status === 'draft' && (
               <button
-                onClick={() => publishMutation.mutate(page.id)}
+                onClick={() => publishMutation.mutate(page.id, { onSuccess: () => setRightPanelOpen(true) })}
                 disabled={publishMutation.isPending || !canEdit}
                 className="flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
@@ -283,7 +321,10 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               onClick={() => {
                 if (!canEdit) return
                 setIsEditing(!isEditing)
-                if (!isEditing) setEditContent(page.contentMd)
+                if (!isEditing) {
+                  setEditContent(page.contentMd)
+                  setRightPanelOpen(false)
+                }
               }}
               disabled={!canEdit}
               className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm hover:bg-accent transition-colors"
@@ -509,7 +550,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                   ))}
                 </div>
                 <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  Tip: use the insert chips for structure, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
+                  Tip: use the insert chips for structure, paste screenshots directly from your clipboard, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div className={cn('space-y-2', mobileEditorPane === 'preview' && 'hidden lg:block')}>
@@ -521,9 +562,17 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       ref={editorRef}
                       value={editContent}
                       onChange={e => setEditContent(e.target.value)}
+                      onPaste={handleEditorPaste}
                       className="block w-full min-h-[70vh] rounded-2xl border border-input bg-background p-5 text-sm leading-7 resize-y"
                       placeholder="Start with a concise summary, then add key points, source notes, and open questions..."
                     />
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <ImagePlus className="h-3.5 w-3.5 text-primary" />
+                      {imagePasteState === 'pasting' && <span>Processing clipboard image...</span>}
+                      {imagePasteState === 'ready' && <span>Image inserted into the draft.</span>}
+                      {imagePasteState === 'failed' && <span>Could not read the clipboard image.</span>}
+                      {imagePasteState === 'idle' && <span>Paste an image from outside with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
+                    </div>
                   </div>
                   <div className={cn('space-y-2', mobileEditorPane === 'edit' && 'hidden lg:block')}>
                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -537,7 +586,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })}
+                    onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: finishDraftSave })}
                     disabled={updateMutation.isPending || !canEdit}
                     className="rounded-full border border-input px-4 py-2 text-sm hover:bg-accent"
                   >
@@ -567,6 +616,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                         onClick={() => {
                           setEditContent(page.contentMd)
                           setIsEditing(true)
+                          setRightPanelOpen(false)
                         }}
                         className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
                       >
@@ -707,7 +757,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
         <button
           onClick={() => setRightPanelOpen(!rightPanelOpen)}
           className="flex-shrink-0 h-8 lg:h-auto lg:w-4 bg-muted border-l border-border flex items-center justify-center hover:bg-accent transition-colors"
-          title="Toggle context panel"
+          title={rightPanelOpen ? 'Hide writing context' : 'Show writing context'}
         >
           <PanelRight className="w-3 h-3 lg:hidden" />
           <span className="hidden lg:inline">{rightPanelOpen ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}</span>
@@ -722,7 +772,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
             <div className="mb-6 rounded-2xl border border-border bg-background p-4">
               <h4 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                Continue Writing
+                Writing Context
               </h4>
               <div className="space-y-2">
                 {authoringPrompts.map(prompt => (

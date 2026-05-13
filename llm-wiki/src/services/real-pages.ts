@@ -42,10 +42,16 @@ export function createRealPageService(): IPageService {
     async getDiff(pageId, versionNo) {
       return apiRequest<{ old: string; new: string }>(`/pages/${pageId}/diff?versionNo=${versionNo}`)
     },
-    async compose(topic) {
+    async compose(payload) {
       return apiRequest<Page>('/pages/compose', {
         method: 'POST',
-        body: JSON.stringify({ topic, sourceIds: [] }),
+        body: JSON.stringify({
+          topic: payload.topic,
+          sourceIds: payload.sourceIds ?? [],
+          contentMd: payload.contentMd,
+          collectionId: payload.collectionId,
+          pageType: payload.pageType,
+        }),
       })
     },
     async publish(pageId) {

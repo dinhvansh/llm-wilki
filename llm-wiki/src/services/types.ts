@@ -81,7 +81,7 @@ export interface IPageService {
   getVersions(pageId: string): Promise<PageVersion[]>
   getAudit(pageId: string): Promise<AuditLog[]>
   getDiff(pageId: string, versionNo: number): Promise<{ old: string; new: string }>
-  compose(topic: string): Promise<Page>
+  compose(payload: { topic: string; sourceIds?: string[]; contentMd?: string; collectionId?: string; pageType?: string }): Promise<Page>
   publish(pageId: string): Promise<Page>
   unpublish(pageId: string): Promise<Page>
   update(pageId: string, contentMd: string): Promise<Page>

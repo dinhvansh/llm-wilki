@@ -104,7 +104,7 @@ export function useUpdatePage() {
 export function useComposePage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (topic: string) => pageService.compose(topic),
+    mutationFn: (payload: { topic: string; sourceIds?: string[]; contentMd?: string; collectionId?: string; pageType?: string }) => pageService.compose(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pages'] })
     },

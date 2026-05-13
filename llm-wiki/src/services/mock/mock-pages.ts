@@ -86,16 +86,17 @@ export function createMockPageService(): IPageService {
       }
     },
 
-    async compose(topic) {
+    async compose(payload) {
       await delay(1000)
+      const topic = payload.topic
       const newPage: Page = {
         id: `page-${Date.now()}`,
         slug: topic.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
         title: topic,
-        pageType: 'source_derived',
+        pageType: payload.pageType === 'deep_dive' || payload.pageType === 'overview' || payload.pageType === 'faq' ? payload.pageType : 'summary',
         status: 'draft',
         summary: `Draft page generated for topic: ${topic}`,
-        contentMd: `# ${topic}\n\nDraft content for this topic...`,
+        contentMd: payload.contentMd || `# ${topic}\n\nDraft content for this topic...`,
         currentVersion: 1,
         lastComposedAt: new Date().toISOString(),
         owner: 'PageComposer Agent',
