@@ -2,10 +2,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { diagramService } from '@/services'
 
-export function useDiagrams(params?: { page?: number; pageSize?: number; status?: string; search?: string; collectionId?: string; pageId?: string; sourceId?: string }) {
+export function useDiagrams(params?: { page?: number; pageSize?: number; status?: string; search?: string; collectionId?: string; pageId?: string; sourceId?: string }, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['diagrams', params],
     queryFn: () => diagramService.list(params),
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -17,11 +18,11 @@ export function useDiagram(slug: string) {
   })
 }
 
-export function useAssessDiagramPage(pageId: string) {
+export function useAssessDiagramPage(pageId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['diagram-assess-page', pageId],
     queryFn: () => diagramService.assessPage(pageId),
-    enabled: !!pageId,
+    enabled: (options?.enabled ?? true) && !!pageId,
   })
 }
 

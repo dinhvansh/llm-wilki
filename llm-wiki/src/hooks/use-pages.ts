@@ -11,10 +11,11 @@ export function usePages(params?: {
   search?: string
   sort?: string
   collectionId?: string
-}) {
+}, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['pages', params],
     queryFn: () => pageService.list(params),
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -47,19 +48,19 @@ export function useGlossary(params?: { page?: number; pageSize?: number; search?
   })
 }
 
-export function usePageVersions(pageId: string) {
+export function usePageVersions(pageId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['page-versions', pageId],
     queryFn: () => pageService.getVersions(pageId),
-    enabled: !!pageId,
+    enabled: (options?.enabled ?? true) && !!pageId,
   })
 }
 
-export function usePageAudit(pageId: string) {
+export function usePageAudit(pageId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['page-audit', pageId],
     queryFn: () => pageService.getAudit(pageId),
-    enabled: !!pageId,
+    enabled: (options?.enabled ?? true) && !!pageId,
   })
 }
 

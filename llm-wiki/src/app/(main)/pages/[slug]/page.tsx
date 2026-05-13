@@ -56,8 +56,8 @@ function pageCitationAskPrompt(pageTitle: string, claimText: string, sourceTitle
 
 export default function PageDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true)
-  const [rightPanelOpen, setRightPanelOpen] = useState(true)
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false)
+  const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [pageSearch, setPageSearch] = useState('')
@@ -68,20 +68,22 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
   const [imagePasteState, setImagePasteState] = useState<'idle' | 'pasting' | 'ready' | 'failed'>('idle')
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const shouldLoadLeftRail = leftPanelOpen
+  const shouldLoadRightRail = rightPanelOpen
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
-  const { data: versions } = usePageVersions(page?.id ?? '')
-  const { data: auditLogs } = usePageAudit(page?.id ?? '')
-  const { data: sourcesData } = useSources()
-  const { data: pagesData } = usePages({ pageSize: 100, sort: 'title' })
+  const { data: versions } = usePageVersions(page?.id ?? '', { enabled: shouldLoadRightRail })
+  const { data: auditLogs } = usePageAudit(page?.id ?? '', { enabled: shouldLoadRightRail })
+  const { data: sourcesData } = useSources(undefined, { enabled: shouldLoadRightRail })
+  const { data: pagesData } = usePages({ pageSize: 100, sort: 'title' }, { enabled: shouldLoadLeftRail || (page?.relatedPageIds?.length ?? 0) > 0 })
   const { data: collections } = useCollections()
   const assignCollection = useAssignPageCollection()
   const publishMutation = usePublishPage()
   const unpublishMutation = useUnpublishPage()
   const updateMutation = useUpdatePage()
   const generateDiagramMutation = useGenerateDiagramFromPage()
-  const { data: bpmAssessment } = useAssessDiagramPage(page?.id ?? '')
-  const { data: relatedDiagrams } = useDiagrams({ pageId: page?.id, pageSize: 20 })
+  const { data: bpmAssessment } = useAssessDiagramPage(page?.id ?? '', { enabled: shouldLoadRightRail })
+  const { data: relatedDiagrams } = useDiagrams({ pageId: page?.id, pageSize: 20 }, { enabled: shouldLoadRightRail })
   const { hasRole } = useAuth()
   const router = useRouter()
   const deferredPageSearch = useDeferredValue(pageSearch)
@@ -110,6 +112,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
 
   useEffect(() => {
     if (!page?.id) return
+    setLeftPanelOpen(page.status !== 'draft')
     setRightPanelOpen(page.status !== 'draft')
   }, [page?.id, page?.status])
 

@@ -2,10 +2,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { sourceService } from '@/services'
 
-export function useSources(params?: Parameters<typeof sourceService.list>[0]) {
+export function useSources(params?: Parameters<typeof sourceService.list>[0], options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['sources', params],
     queryFn: () => sourceService.list(params),
+    enabled: options?.enabled ?? true,
   })
 }
 
