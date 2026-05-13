@@ -17,6 +17,7 @@ class DiagramOut(BaseModel):
     currentVersion: int
     drawioXml: str
     specJson: dict
+    flowDocument: dict
     sourcePageIds: list[str]
     sourceIds: list[str]
     actorLanes: list[str]
@@ -37,6 +38,7 @@ class DiagramVersionOut(BaseModel):
     versionNo: int
     drawioXml: str
     specJson: dict
+    flowDocument: dict
     changeSummary: str
     createdAt: str
     createdByAgentOrUser: str

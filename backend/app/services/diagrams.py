@@ -82,6 +82,15 @@ def serialize_diagram(record: Diagram, db: Session | None = None) -> dict:
     source_page_ids = record.source_page_ids or []
     source_ids = record.source_ids or []
     related_diagram_ids = record.related_diagram_ids or []
+    flow_document = _ensure_flow_document(
+        record.flow_document or {},
+        record.spec_json or {},
+        title=record.title,
+        objective=record.objective or "",
+        owner=record.owner,
+        source_page_ids=source_page_ids,
+        source_ids=source_ids,
+    )
     return {
         "id": record.id,
         "slug": record.slug,
@@ -94,6 +103,7 @@ def serialize_diagram(record: Diagram, db: Session | None = None) -> dict:
         "currentVersion": record.current_version,
         "drawioXml": record.drawio_xml or "",
         "specJson": record.spec_json or {},
+        "flowDocument": flow_document,
         "sourcePageIds": source_page_ids,
         "sourceIds": source_ids,
         "actorLanes": record.actor_lanes or [],
@@ -116,6 +126,7 @@ def serialize_diagram_version(record: DiagramVersion) -> dict:
         "versionNo": record.version_no,
         "drawioXml": record.drawio_xml or "",
         "specJson": record.spec_json or {},
+        "flowDocument": record.flow_document or flow_document_from_spec(record.spec_json or {}, title="", objective="", owner=""),
         "changeSummary": record.change_summary or "",
         "createdAt": _iso(record.created_at),
         "createdByAgentOrUser": record.created_by_agent_or_user,
@@ -399,6 +410,199 @@ def _validate_generated_spec(spec_json: dict) -> dict:
     return {"isValid": len(warnings) == 0, "warnings": warnings}
 
 
+def flow_document_from_spec(
+    spec_json: dict,
+    *,
+    title: str,
+    objective: str = "",
+    owner: str = "",
+    source_page_ids: list[str] | None = None,
+    source_ids: list[str] | None = None,
+) -> dict:
+    actors = [actor for actor in spec_json.get("actors", []) if isinstance(actor, dict)]
+    actor_labels = [str(actor.get("label") or actor.get("name") or "").strip() for actor in actors]
+    actor_labels = [label for label in actor_labels if label]
+    lanes = [
+        {"id": _actor_id(label), "label": label, "x": 80 + index * 300, "width": 260}
+        for index, label in enumerate(actor_labels or [owner or "System"])
+    ]
+    lane_by_label = {lane["label"]: lane for lane in lanes}
+    spec_nodes = [node for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("id")]
+    nodes: list[dict] = []
+    for index, node in enumerate(spec_nodes):
+        node_owner = str(node.get("owner") or lanes[0]["label"]).strip()
+        lane = lane_by_label.get(node_owner, lanes[0])
+        node_type = str(node.get("type") or "task")
+        nodes.append(
+            {
+                "id": str(node.get("id")),
+                "type": node_type,
+                "label": str(node.get("label") or "").strip() or node_type.title(),
+                "owner": node_owner,
+                "position": {"x": int(lane["x"]), "y": 90 + index * 120},
+                "size": {"width": 220, "height": 72},
+                "data": {
+                    "citation": node.get("citation"),
+                    "sourceRef": node.get("sourceRef"),
+                },
+            }
+        )
+    edges = []
+    for index, edge in enumerate([item for item in spec_json.get("edges", []) if isinstance(item, dict)]):
+        source = str(edge.get("from") or edge.get("source") or "").strip()
+        target = str(edge.get("to") or edge.get("target") or "").strip()
+        if not source or not target:
+            continue
+        edges.append(
+            {
+                "id": str(edge.get("id") or f"edge-{index + 1}"),
+                "source": source,
+                "target": target,
+                "label": str(edge.get("label") or "").strip(),
+                "type": str(edge.get("type") or "smoothstep"),
+                "data": {
+                    "citation": edge.get("citation"),
+                    "sourceRef": edge.get("sourceRef"),
+                },
+            }
+        )
+    return {
+        "version": "1.0",
+        "engine": "openflowkit",
+        "family": "flowchart",
+        "pages": [
+            {
+                "id": "page-main",
+                "name": "Main",
+                "lanes": lanes,
+                "nodes": nodes,
+                "edges": edges,
+                "groups": [],
+                "viewport": {"x": 0, "y": 0, "zoom": 1},
+            }
+        ],
+        "metadata": {
+            "title": title,
+            "objective": objective,
+            "owner": owner,
+            "sourceIds": source_ids or spec_json.get("sourceIds", []),
+            "sourcePageIds": source_page_ids or spec_json.get("sourcePageIds", []),
+            "reviewStatus": spec_json.get("reviewStatus") or "needs_review",
+            "scopeSummary": spec_json.get("scopeSummary") or objective,
+            "openQuestions": spec_json.get("openQuestions", []),
+            "citations": spec_json.get("citations", []),
+            "validation": spec_json.get("validation") or _validate_generated_spec(spec_json),
+            "legacySpec": spec_json,
+        },
+    }
+
+
+def spec_from_flow_document(flow_document: dict) -> dict:
+    page = _first_flow_page(flow_document)
+    nodes = []
+    for node in page.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        nodes.append(
+            {
+                "id": node.get("id"),
+                "type": node.get("type") or "task",
+                "label": node.get("label") or "",
+                "owner": node.get("owner") or "",
+            }
+        )
+    edges = []
+    for edge in page.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        edges.append(
+            {
+                "id": edge.get("id"),
+                "from": edge.get("source"),
+                "to": edge.get("target"),
+                "label": edge.get("label") or "",
+            }
+        )
+    metadata = flow_document.get("metadata") if isinstance(flow_document.get("metadata"), dict) else {}
+    spec = dict(metadata.get("legacySpec") if isinstance(metadata.get("legacySpec"), dict) else {})
+    spec.update(
+        {
+            "title": metadata.get("title") or "",
+            "scopeSummary": metadata.get("scopeSummary") or metadata.get("objective") or "",
+            "actors": [{"id": lane.get("id"), "label": lane.get("label")} for lane in page.get("lanes", []) if isinstance(lane, dict)],
+            "nodes": nodes,
+            "edges": edges,
+            "openQuestions": metadata.get("openQuestions") or [],
+            "citations": metadata.get("citations") or [],
+            "reviewStatus": metadata.get("reviewStatus") or "needs_review",
+        }
+    )
+    spec["validation"] = _validate_generated_spec(spec)
+    return spec
+
+
+def _first_flow_page(flow_document: dict | None) -> dict:
+    if not isinstance(flow_document, dict):
+        return {"id": "page-main", "name": "Main", "lanes": [], "nodes": [], "edges": [], "groups": [], "viewport": {}}
+    pages = flow_document.get("pages")
+    if isinstance(pages, list) and pages and isinstance(pages[0], dict):
+        page = dict(pages[0])
+    else:
+        page = {"id": "page-main", "name": "Main"}
+    page.setdefault("lanes", [])
+    page.setdefault("nodes", [])
+    page.setdefault("edges", [])
+    page.setdefault("groups", [])
+    page.setdefault("viewport", {})
+    return page
+
+
+def _ensure_flow_document(
+    flow_document: dict | None,
+    spec_json: dict | None,
+    *,
+    title: str,
+    objective: str,
+    owner: str,
+    source_page_ids: list[str] | None = None,
+    source_ids: list[str] | None = None,
+) -> dict:
+    if isinstance(flow_document, dict) and flow_document.get("pages"):
+        metadata = flow_document.get("metadata") if isinstance(flow_document.get("metadata"), dict) else {}
+        flow_document["metadata"] = {
+            **metadata,
+            "title": title,
+            "objective": objective,
+            "owner": owner,
+            "sourcePageIds": source_page_ids or metadata.get("sourcePageIds") or [],
+            "sourceIds": source_ids or metadata.get("sourceIds") or [],
+        }
+        return flow_document
+    return flow_document_from_spec(
+        spec_json or {},
+        title=title,
+        objective=objective,
+        owner=owner,
+        source_page_ids=source_page_ids or [],
+        source_ids=source_ids or [],
+    )
+
+
+def _flow_lanes(flow_document: dict) -> list[str]:
+    page = _first_flow_page(flow_document)
+    return [str(lane.get("label")).strip() for lane in page.get("lanes", []) if isinstance(lane, dict) and str(lane.get("label")).strip()]
+
+
+def _flow_entry_points(flow_document: dict) -> list[str]:
+    page = _first_flow_page(flow_document)
+    return [str(node.get("label")).strip() for node in page.get("nodes", []) if isinstance(node, dict) and node.get("type") == "start" and str(node.get("label")).strip()]
+
+
+def _flow_exit_points(flow_document: dict) -> list[str]:
+    page = _first_flow_page(flow_document)
+    return [str(node.get("label")).strip() for node in page.get("nodes", []) if isinstance(node, dict) and node.get("type") == "end" and str(node.get("label")).strip()]
+
+
 def _style_for_node(node_type: str) -> str:
     if node_type == "start":
         return "ellipse;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;"
@@ -678,7 +882,14 @@ def _create_generated_diagram(
     actor_lanes = [actor_item.get("label") for actor_item in spec_json.get("actors", []) if isinstance(actor_item, dict) and actor_item.get("label")]
     entry_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "start"]
     exit_points = [str(node.get("label")).strip() for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("type") == "end"]
-    drawio_xml = _drawio_xml_from_spec(spec_json)
+    flow_document = flow_document_from_spec(
+        spec_json,
+        title=title,
+        objective=objective,
+        owner=(owner or actor).strip() or actor,
+        source_page_ids=source_page_ids,
+        source_ids=source_ids,
+    )
     return create_diagram(
         db,
         title=title,
@@ -692,7 +903,7 @@ def _create_generated_diagram(
         exit_points=[item for item in exit_points if item],
         related_diagram_ids=[],
         spec_json=spec_json,
-        drawio_xml=drawio_xml,
+        flow_document=flow_document,
     )
 
 
@@ -839,9 +1050,20 @@ def create_diagram(
     exit_points: list[str] | None = None,
     related_diagram_ids: list[str] | None = None,
     spec_json: dict | None = None,
+    flow_document: dict | None = None,
     drawio_xml: str = "",
 ) -> dict:
     now = datetime.now(timezone.utc)
+    effective_flow_document = _ensure_flow_document(
+        flow_document,
+        spec_json or {},
+        title=title.strip()[:255],
+        objective=(objective or "").strip(),
+        owner=owner,
+        source_page_ids=source_page_ids or [],
+        source_ids=source_ids or [],
+    )
+    effective_spec_json = spec_from_flow_document(effective_flow_document)
     record = Diagram(
         id=f"diag-{uuid4().hex[:8]}",
         slug=_unique_slug(db, slugify(title)),
@@ -853,7 +1075,8 @@ def create_diagram(
         collection_id=collection_id,
         current_version=1,
         drawio_xml=drawio_xml or "",
-        spec_json=spec_json or {},
+        spec_json=effective_spec_json,
+        flow_document=effective_flow_document,
         source_page_ids=source_page_ids or [],
         source_ids=source_ids or [],
         actor_lanes=actor_lanes or [],
@@ -872,6 +1095,7 @@ def create_diagram(
             version_no=1,
             drawio_xml=record.drawio_xml,
             spec_json=record.spec_json,
+            flow_document=record.flow_document,
             change_summary="Initial diagram draft",
             created_at=now,
             created_by_agent_or_user=owner,
@@ -912,7 +1136,8 @@ def update_diagram(
     exit_points: list[str],
     related_diagram_ids: list[str],
     spec_json: dict,
-    drawio_xml: str,
+    drawio_xml: str = "",
+    flow_document: dict | None = None,
     change_summary: str | None = None,
     expected_version: int | None = None,
 ) -> dict | None:
@@ -933,7 +1158,17 @@ def update_diagram(
     record.entry_points = entry_points
     record.exit_points = exit_points
     record.related_diagram_ids = related_diagram_ids
-    record.spec_json = spec_json or {}
+    effective_flow_document = _ensure_flow_document(
+        flow_document,
+        spec_json or {},
+        title=record.title,
+        objective=record.objective,
+        owner=record.owner,
+        source_page_ids=source_page_ids,
+        source_ids=source_ids,
+    )
+    record.flow_document = effective_flow_document
+    record.spec_json = spec_from_flow_document(effective_flow_document)
     record.drawio_xml = drawio_xml or ""
     record.updated_at = now
     record.current_version += 1
@@ -944,6 +1179,7 @@ def update_diagram(
             version_no=record.current_version,
             drawio_xml=record.drawio_xml,
             spec_json=record.spec_json,
+            flow_document=record.flow_document,
             change_summary=(change_summary or "Updated diagram").strip()[:255],
             created_at=now,
             created_by_agent_or_user=actor,
@@ -1014,6 +1250,9 @@ def submit_diagram_for_review(db: Session, diagram_id: str, *, actor: str) -> di
     spec_json = dict(record.spec_json or {})
     spec_json["reviewStatus"] = "in_review"
     record.spec_json = spec_json
+    flow_document = _ensure_flow_document(record.flow_document or {}, spec_json, title=record.title, objective=record.objective or "", owner=record.owner, source_page_ids=record.source_page_ids or [], source_ids=record.source_ids or [])
+    flow_document["metadata"]["reviewStatus"] = "in_review"
+    record.flow_document = flow_document
     record.status = "in_review"
     record.updated_at = now
     create_audit_log(
@@ -1042,6 +1281,10 @@ def request_diagram_changes(db: Session, diagram_id: str, *, actor: str, comment
         review_notes.append({"actor": actor, "comment": comment, "at": now.isoformat()})
     spec_json["reviewNotes"] = review_notes[-10:]
     record.spec_json = spec_json
+    flow_document = _ensure_flow_document(record.flow_document or {}, spec_json, title=record.title, objective=record.objective or "", owner=record.owner, source_page_ids=record.source_page_ids or [], source_ids=record.source_ids or [])
+    flow_document["metadata"]["reviewStatus"] = "changes_requested"
+    flow_document["metadata"]["reviewNotes"] = review_notes[-10:]
+    record.flow_document = flow_document
     record.status = "draft"
     record.updated_at = now
     create_audit_log(
@@ -1070,6 +1313,10 @@ def approve_diagram_review(db: Session, diagram_id: str, *, actor: str, comment:
         review_notes.append({"actor": actor, "comment": comment, "at": now.isoformat()})
     spec_json["reviewNotes"] = review_notes[-10:]
     record.spec_json = spec_json
+    flow_document = _ensure_flow_document(record.flow_document or {}, spec_json, title=record.title, objective=record.objective or "", owner=record.owner, source_page_ids=record.source_page_ids or [], source_ids=record.source_ids or [])
+    flow_document["metadata"]["reviewStatus"] = "approved"
+    flow_document["metadata"]["reviewNotes"] = review_notes[-10:]
+    record.flow_document = flow_document
     record.status = "draft"
     record.updated_at = now
     create_audit_log(

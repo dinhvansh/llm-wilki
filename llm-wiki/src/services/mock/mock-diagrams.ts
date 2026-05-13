@@ -1,4 +1,5 @@
 import type { AuditLog, Diagram, DiagramVersion, PaginatedResponse } from '@/lib/types'
+import { emptyFlowDocument } from '@/lib/openflow'
 
 import type { IDiagramService } from '../types'
 
@@ -20,6 +21,7 @@ let diagrams: Diagram[] = [
       title: 'Document Review Process',
       actors: [{ id: 'editor', label: 'Editor' }, { id: 'reviewer', label: 'Reviewer' }, { id: 'system', label: 'System' }],
     },
+    flowDocument: emptyFlowDocument('Document Review Process', 'Draft, review, and publish a knowledge page with BPM ownership lanes.', 'Knowledge Ops'),
     sourcePageIds: ['page-004'],
     sourceIds: ['src-003'],
     actorLanes: ['Editor', 'Reviewer', 'System'],
@@ -42,6 +44,7 @@ let versions: DiagramVersion[] = [
     versionNo: 1,
     drawioXml: '<mxGraphModel><root /></mxGraphModel>',
     specJson: { title: 'Document Review Process' },
+    flowDocument: emptyFlowDocument('Document Review Process', 'Draft, review, and publish a knowledge page with BPM ownership lanes.', 'Knowledge Ops'),
     changeSummary: 'Initial diagram draft',
     createdAt: NOW,
     createdByAgentOrUser: 'Knowledge Ops',
@@ -79,6 +82,7 @@ function createLocalDiagram(payload: {
   exitPoints?: string[]
   relatedDiagramIds?: string[]
   specJson?: Record<string, unknown>
+  flowDocument?: Diagram['flowDocument']
   drawioXml?: string
 }): Diagram {
   const created: Diagram = {
@@ -93,6 +97,7 @@ function createLocalDiagram(payload: {
     currentVersion: 1,
     drawioXml: payload.drawioXml ?? '',
     specJson: payload.specJson ?? {},
+    flowDocument: payload.flowDocument ?? emptyFlowDocument(payload.title, payload.objective ?? '', payload.owner ?? 'Current User'),
     sourcePageIds: payload.sourcePageIds ?? [],
     sourceIds: payload.sourceIds ?? [],
     actorLanes: payload.actorLanes ?? [],
@@ -113,6 +118,7 @@ function createLocalDiagram(payload: {
     versionNo: 1,
     drawioXml: created.drawioXml,
     specJson: created.specJson,
+    flowDocument: created.flowDocument,
     changeSummary: 'Initial diagram draft',
     createdAt: created.createdAt,
     createdByAgentOrUser: created.owner,
@@ -196,6 +202,7 @@ export function createMockDiagramService(): IDiagramService {
         entryPoints: ['Document ready'],
         exitPoints: ['Draft saved'],
         drawioXml: '<mxGraphModel><root /></mxGraphModel>',
+        flowDocument: emptyFlowDocument(payload?.title ?? `Generated BPM From Page ${pageId}`, payload?.objective ?? 'AI-generated BPM draft from page content.', 'Current User'),
       })
     },
     async generateFromSource(sourceId, payload) {
@@ -221,6 +228,7 @@ export function createMockDiagramService(): IDiagramService {
         entryPoints: ['Source ingested'],
         exitPoints: ['Draft saved'],
         drawioXml: '<mxGraphModel><root /></mxGraphModel>',
+        flowDocument: emptyFlowDocument(payload?.title ?? `Generated BPM From Source ${sourceId}`, payload?.objective ?? 'AI-generated BPM draft from source content.', 'Current User'),
       })
     },
     async create(payload) {
@@ -239,6 +247,7 @@ export function createMockDiagramService(): IDiagramService {
         collectionId: payload.collectionId ?? null,
         drawioXml: payload.drawioXml ?? '',
         specJson: payload.specJson ?? {},
+        flowDocument: payload.flowDocument ?? existing.flowDocument,
         sourcePageIds: payload.sourcePageIds ?? [],
         sourceIds: payload.sourceIds ?? [],
         actorLanes: payload.actorLanes ?? [],
@@ -258,6 +267,7 @@ export function createMockDiagramService(): IDiagramService {
         versionNo: nextVersion,
         drawioXml: updated.drawioXml,
         specJson: updated.specJson,
+        flowDocument: updated.flowDocument,
         changeSummary: payload.changeSummary ?? 'Updated diagram',
         createdAt: updated.updatedAt,
         createdByAgentOrUser: updated.owner,

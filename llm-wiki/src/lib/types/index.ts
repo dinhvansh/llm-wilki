@@ -393,6 +393,7 @@ export interface Diagram {
   currentVersion: number
   drawioXml: string
   specJson: Record<string, unknown>
+  flowDocument: FlowDocument
   sourcePageIds: string[]
   sourceIds: string[]
   actorLanes: string[]
@@ -413,9 +414,69 @@ export interface DiagramVersion {
   versionNo: number
   drawioXml: string
   specJson: Record<string, unknown>
+  flowDocument: FlowDocument
   changeSummary: string
   createdAt: string
   createdByAgentOrUser: string
+}
+
+export interface FlowDocument {
+  version: string
+  engine?: string
+  family: string
+  pages: FlowPage[]
+  metadata: FlowMetadata
+}
+
+export interface FlowPage {
+  id: string
+  name: string
+  lanes?: FlowLane[]
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+  groups?: Array<Record<string, unknown>>
+  viewport?: { x?: number; y?: number; zoom?: number }
+}
+
+export interface FlowLane {
+  id: string
+  label: string
+  x?: number
+  width?: number
+}
+
+export interface FlowNode {
+  id: string
+  type: string
+  label: string
+  owner?: string
+  position?: { x: number; y: number }
+  size?: { width?: number; height?: number }
+  data?: Record<string, unknown>
+}
+
+export interface FlowEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+  type?: string
+  data?: Record<string, unknown>
+}
+
+export interface FlowMetadata {
+  title?: string
+  objective?: string
+  owner?: string
+  sourceIds?: string[]
+  sourcePageIds?: string[]
+  reviewStatus?: string
+  scopeSummary?: string
+  openQuestions?: string[]
+  citations?: Array<Record<string, unknown>>
+  validation?: { isValid?: boolean; warnings?: string[] }
+  legacySpec?: Record<string, unknown>
+  reviewNotes?: Array<Record<string, unknown>>
 }
 
 // === Job ===

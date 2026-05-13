@@ -42,8 +42,10 @@ from app.services.auth import ensure_dev_admin_user
 def init_database(db: Session, seed_demo_data: bool = True) -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_page_content_json_column()
+    _ensure_diagram_flow_document_columns()
     _ensure_entity_management_columns()
     _backfill_page_content_json(db)
+    _backfill_diagram_flow_documents(db)
     _backfill_entity_management_fields(db)
     ensure_dev_admin_user(db)
     has_sources = db.query(Source.id).first()
@@ -93,6 +95,23 @@ def _ensure_page_content_json_column() -> None:
         connection.execute(text(statement))
 
 
+def _ensure_diagram_flow_document_columns() -> None:
+    inspector = inspect(engine)
+    json_sql = "JSONB" if engine.dialect.name == "postgresql" else "JSON"
+    statements: list[str] = []
+    diagram_columns = {column["name"] for column in inspector.get_columns("diagrams")}
+    version_columns = {column["name"] for column in inspector.get_columns("diagram_versions")}
+    if "flow_document" not in diagram_columns:
+        statements.append(f"ALTER TABLE diagrams ADD COLUMN flow_document {json_sql}")
+    if "flow_document" not in version_columns:
+        statements.append(f"ALTER TABLE diagram_versions ADD COLUMN flow_document {json_sql}")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def _ensure_entity_management_columns() -> None:
     inspector = inspect(engine)
     columns = {column["name"] for column in inspector.get_columns("entities")}
@@ -130,6 +149,39 @@ def _backfill_page_content_json(db: Session) -> None:
         if page.content_json:
             continue
         page.content_json = markdown_to_blocks(page.content_md)
+        changed = True
+    if changed:
+        db.commit()
+
+
+def _backfill_diagram_flow_documents(db: Session) -> None:
+    from app.services.diagrams import flow_document_from_spec
+
+    changed = False
+    for diagram in db.query(Diagram).all():
+        if diagram.flow_document:
+            continue
+        diagram.flow_document = flow_document_from_spec(
+            diagram.spec_json or {},
+            title=diagram.title,
+            objective=diagram.objective or "",
+            owner=diagram.owner,
+            source_page_ids=diagram.source_page_ids or [],
+            source_ids=diagram.source_ids or [],
+        )
+        changed = True
+    for version in db.query(DiagramVersion).all():
+        if version.flow_document:
+            continue
+        diagram = db.query(Diagram).filter(Diagram.id == version.diagram_id).first()
+        version.flow_document = flow_document_from_spec(
+            version.spec_json or {},
+            title=diagram.title if diagram else "",
+            objective=diagram.objective if diagram else "",
+            owner=diagram.owner if diagram else "",
+            source_page_ids=diagram.source_page_ids if diagram else [],
+            source_ids=diagram.source_ids if diagram else [],
+        )
         changed = True
     if changed:
         db.commit()

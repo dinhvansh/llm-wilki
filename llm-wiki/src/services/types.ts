@@ -2,7 +2,7 @@ import type {
   Source, SourceChunk, SourceSuggestion, Page, PageVersion, Diagram, DiagramVersion, AuditLog, ReviewItem, Job,
   DashboardStats, GraphData, AskResponse, ChatSession, ChatSessionDetail, SearchResult,
   PaginatedResponse, Entity, EntityDetail, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
-  KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, SkillTestResult, ManagedUser, Department, AdminRole, Note
+  KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, SkillTestResult, ManagedUser, Department, AdminRole, Note, FlowDocument
 } from '@/lib/types'
 import type { PageBlock } from '@/lib/page-blocks'
 import type { PageStatus, SourceStatus, SeverityLevel, ReviewIssueType } from '@/lib/constants'
@@ -117,6 +117,7 @@ export interface IDiagramService {
     exitPoints?: string[]
     relatedDiagramIds?: string[]
     specJson?: Record<string, unknown>
+    flowDocument?: FlowDocument
     drawioXml?: string
   }): Promise<Diagram>
   update(diagramId: string, payload: {
@@ -131,6 +132,7 @@ export interface IDiagramService {
     exitPoints?: string[]
     relatedDiagramIds?: string[]
     specJson?: Record<string, unknown>
+    flowDocument?: FlowDocument
     drawioXml?: string
     changeSummary?: string
     expectedVersion?: number

@@ -43,6 +43,7 @@ class CreateDiagramPayload(BaseModel):
     exitPoints: list[str] = []
     relatedDiagramIds: list[str] = []
     specJson: dict = {}
+    flowDocument: dict = {}
     drawioXml: str = ""
 
 
@@ -128,6 +129,7 @@ async def create_diagram_route(payload: CreateDiagramPayload, db: Session = Depe
         exit_points=payload.exitPoints,
         related_diagram_ids=payload.relatedDiagramIds,
         spec_json=payload.specJson,
+        flow_document=payload.flowDocument,
         drawio_xml=payload.drawioXml,
     )
 
@@ -161,6 +163,7 @@ async def generate_diagram_from_page_route(
             exit_points=diagram["exitPoints"],
             related_diagram_ids=diagram["relatedDiagramIds"],
             spec_json=diagram["specJson"],
+            flow_document=diagram["flowDocument"],
             drawio_xml=diagram["drawioXml"],
             change_summary="Customize generated BPM draft",
             expected_version=diagram["currentVersion"],
@@ -197,6 +200,7 @@ async def generate_diagram_from_source_route(
             exit_points=diagram["exitPoints"],
             related_diagram_ids=diagram["relatedDiagramIds"],
             spec_json=diagram["specJson"],
+            flow_document=diagram["flowDocument"],
             drawio_xml=diagram["drawioXml"],
             change_summary="Customize generated BPM draft",
             expected_version=diagram["currentVersion"],
@@ -222,6 +226,7 @@ async def update_diagram_route(diagram_id: str, payload: UpdateDiagramPayload, d
             exit_points=payload.exitPoints,
             related_diagram_ids=payload.relatedDiagramIds,
             spec_json=payload.specJson,
+            flow_document=payload.flowDocument,
             drawio_xml=payload.drawioXml,
             change_summary=payload.changeSummary,
             expected_version=payload.expectedVersion,
