@@ -8,6 +8,8 @@ Tai lieu nay doi chieu nhanh giua repo hien tai va `open-notebook` de xac dinh:
 
 Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la lay dung nhung pattern giup repo nay de scale va de van hanh hon.
 
+Tham chieu upstream: <https://github.com/lfnovo/open-notebook>. Repo nay khong vendor source `open-notebook`; cac link ben duoi tro den upstream de tranh commit code tham khao vao san pham.
+
 ## 1. Tong ket nhanh
 
 ### `open-notebook` dang hon o dau
@@ -31,13 +33,13 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 
 #### Hien trang `LLM Wiki`
 
-- Runtime provider config duoc luu theo profile co dinh trong [backend/app/core/runtime_config.py](</mnt/d/AI-native wiki platform/backend/app/core/runtime_config.py>)
-- Logic goi provider nam trong [backend/app/core/llm_client.py](</mnt/d/AI-native wiki platform/backend/app/core/llm_client.py>)
-- Frontend settings dang cho user nhap truc tiep provider/model trong [llm-wiki/src/app/(main)/settings/page.tsx](</mnt/d/AI-native wiki platform/llm-wiki/src/app/(main)/settings/page.tsx>)
+- Runtime provider config duoc luu theo profile co dinh trong [backend/app/core/runtime_config.py](../backend/app/core/runtime_config.py)
+- Logic goi provider nam trong [backend/app/core/llm_client.py](../backend/app/core/llm_client.py)
+- Frontend settings dang cho user nhap truc tiep provider/model trong [llm-wiki/src/app/(main)/settings/page.tsx](../llm-wiki/src/app/(main)/settings/page.tsx)
 
 #### Pattern tu `open-notebook`
 
-- Co model discovery va capability classification trong [open-notebook-main/open-notebook-main/open_notebook/ai/model_discovery.py](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/open_notebook/ai/model_discovery.py>)
+- Co model discovery va capability classification trong [`open_notebook/ai/model_discovery.py`](https://github.com/lfnovo/open-notebook/blob/main/open_notebook/ai/model_discovery.py)
 - Model duoc xem la resource co metadata va capability, khong chi la string config
 
 #### Diem thieu hien tai
@@ -67,14 +69,14 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 
 #### Hien trang `LLM Wiki`
 
-- Nhieu API raise `HTTPException` truc tiep trong router, vi du [backend/app/api/pages.py](</mnt/d/AI-native wiki platform/backend/app/api/pages.py>) va [backend/app/api/sources.py](</mnt/d/AI-native wiki platform/backend/app/api/sources.py>)
-- LLM client hien tai nuot loi va tra `None` trong [backend/app/core/llm_client.py](</mnt/d/AI-native wiki platform/backend/app/core/llm_client.py>)
-- Error connector co taxonomy rieng nho trong [backend/app/core/connectors.py](</mnt/d/AI-native wiki platform/backend/app/core/connectors.py>) nhung chua thanh he thong chung
+- Nhieu API raise `HTTPException` truc tiep trong router, vi du [backend/app/api/pages.py](../backend/app/api/pages.py) va [backend/app/api/sources.py](../backend/app/api/sources.py)
+- LLM client hien tai nuot loi va tra `None` trong [backend/app/core/llm_client.py](../backend/app/core/llm_client.py)
+- Error connector co taxonomy rieng nho trong [backend/app/core/connectors.py](../backend/app/core/connectors.py) nhung chua thanh he thong chung
 
 #### Pattern tu `open-notebook`
 
-- Co error classifier rieng trong [open-notebook-main/open-notebook-main/open_notebook/utils/error_classifier.py](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/open_notebook/utils/error_classifier.py>)
-- Co exception handler tap trung o [open-notebook-main/open-notebook-main/api/main.py](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/api/main.py>)
+- Co error classifier rieng trong [`open_notebook/utils/error_classifier.py`](https://github.com/lfnovo/open-notebook/blob/main/open_notebook/utils/error_classifier.py)
+- Co exception handler tap trung o [`api/main.py`](https://github.com/lfnovo/open-notebook/blob/main/api/main.py)
 
 #### Diem thieu hien tai
 
@@ -103,12 +105,12 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 #### Hien trang `LLM Wiki`
 
 - Business logic dang tap trung rat nhieu trong `backend/app/services/*`
-- Nhung file lon nhu [backend/app/services/query.py](</mnt/d/AI-native wiki platform/backend/app/services/query.py>) va [backend/app/services/sources.py](</mnt/d/AI-native wiki platform/backend/app/services/sources.py>) dang gan nhieu trach nhiem trong mot module
+- Nhung file lon nhu [backend/app/services/query.py](../backend/app/services/query.py) va [backend/app/services/sources.py](../backend/app/services/sources.py) dang gan nhieu trach nhiem trong mot module
 
 #### Pattern tu `open-notebook`
 
 - Chia package theo capability/domain: `ai`, `domain`, `database`, `utils`
-- Data access co lop dung lai trong [open-notebook-main/open-notebook-main/open_notebook/database/repository.py](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/open_notebook/database/repository.py>)
+- Data access co lop dung lai trong [`open_notebook/database/repository.py`](https://github.com/lfnovo/open-notebook/blob/main/open_notebook/database/repository.py)
 
 #### Diem thieu hien tai
 
@@ -136,14 +138,14 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 
 #### Hien trang `LLM Wiki`
 
-- API client dang kha mong o [llm-wiki/src/services/api-client.ts](</mnt/d/AI-native wiki platform/llm-wiki/src/services/api-client.ts>)
-- Auth state dung context/localStorage trong [llm-wiki/src/providers/auth-provider.tsx](</mnt/d/AI-native wiki platform/llm-wiki/src/providers/auth-provider.tsx>)
+- API client dang kha mong o [llm-wiki/src/services/api-client.ts](../llm-wiki/src/services/api-client.ts)
+- Auth state dung context/localStorage trong [llm-wiki/src/providers/auth-provider.tsx](../llm-wiki/src/providers/auth-provider.tsx)
 - Services phan bo theo module nghiep vu la hop ly, nhung lifecycle auth/error/retry chua tap trung
 
 #### Pattern tu `open-notebook`
 
-- Axios client co interceptor o [open-notebook-main/open-notebook-main/frontend/src/lib/api/client.ts](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/frontend/src/lib/api/client.ts>)
-- Auth state tach store rieng trong [open-notebook-main/open-notebook-main/frontend/src/lib/stores/auth-store.ts](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/frontend/src/lib/stores/auth-store.ts>)
+- Axios client co interceptor o [`frontend/src/lib/api/client.ts`](https://github.com/lfnovo/open-notebook/blob/main/frontend/src/lib/api/client.ts)
+- Auth state tach store rieng trong [`frontend/src/lib/stores/auth-store.ts`](https://github.com/lfnovo/open-notebook/blob/main/frontend/src/lib/stores/auth-store.ts)
 
 #### Diem thieu hien tai
 
@@ -172,16 +174,16 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 #### Hien trang `LLM Wiki`
 
 - Co cac script thuc dung o `scripts/`:
-  - [scripts/run_regression.ps1](</mnt/d/AI-native wiki platform/scripts/run_regression.ps1>)
-  - [scripts/docker_smoke.ps1](</mnt/d/AI-native wiki platform/scripts/docker_smoke.ps1>)
-  - [scripts/e2e_smoke.ps1](</mnt/d/AI-native wiki platform/scripts/e2e_smoke.ps1>)
-  - [scripts/reset_local.ps1](</mnt/d/AI-native wiki platform/scripts/reset_local.ps1>)
-- Docker stack kha ro o [docker-compose.yml](</mnt/d/AI-native wiki platform/docker-compose.yml>)
+  - [scripts/run_regression.ps1](../scripts/run_regression.ps1)
+  - [scripts/docker_smoke.ps1](../scripts/docker_smoke.ps1)
+  - [scripts/e2e_smoke.ps1](../scripts/e2e_smoke.ps1)
+  - [scripts/reset_local.ps1](../scripts/reset_local.ps1)
+- Docker stack kha ro o [docker-compose.yml](../docker-compose.yml)
 
 #### Pattern tu `open-notebook`
 
-- Co task entrypoint thong nhat trong [open-notebook-main/open-notebook-main/Makefile](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/Makefile>)
-- Python packaging/dev tooling gom trong [open-notebook-main/open-notebook-main/pyproject.toml](</mnt/d/AI-native wiki platform/open-notebook-main/open-notebook-main/pyproject.toml>)
+- Co task entrypoint thong nhat trong [`Makefile`](https://github.com/lfnovo/open-notebook/blob/main/Makefile)
+- Python packaging/dev tooling gom trong [`pyproject.toml`](https://github.com/lfnovo/open-notebook/blob/main/pyproject.toml)
 
 #### Diem thieu hien tai
 
@@ -209,11 +211,11 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 
 #### Hien trang `LLM Wiki`
 
-- Root README da du sat project o [README.md](</mnt/d/AI-native wiki platform/README.md>)
+- Root README da du sat project o [README.md](../README.md)
 - Da co docs cho user va flow nghiep vu:
-  - [docs/HUONG_DAN_SU_DUNG.md](</mnt/d/AI-native wiki platform/docs/HUONG_DAN_SU_DUNG.md>)
-  - [docs/FLOW_NGHIEP_VU.md](</mnt/d/AI-native wiki platform/docs/FLOW_NGHIEP_VU.md>)
-  - [docs/FLOW_XU_LY_HE_THONG.md](</mnt/d/AI-native wiki platform/docs/FLOW_XU_LY_HE_THONG.md>)
+  - [docs/HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md)
+  - [docs/FLOW_NGHIEP_VU.md](FLOW_NGHIEP_VU.md)
+  - [docs/FLOW_XU_LY_HE_THONG.md](FLOW_XU_LY_HE_THONG.md)
 
 #### Pattern tu `open-notebook`
 
@@ -246,11 +248,11 @@ Muc tieu khong phai la bien `LLM Wiki` thanh ban sao cua `open-notebook`, ma la 
 #### Hien trang `LLM Wiki`
 
 - Manh ve review, lint, audit, admin ops:
-  - [backend/app/api/review.py](</mnt/d/AI-native wiki platform/backend/app/api/review.py>)
-  - [backend/app/services/lint.py](</mnt/d/AI-native wiki platform/backend/app/services/lint.py>)
-  - [backend/app/services/audit.py](</mnt/d/AI-native wiki platform/backend/app/services/audit.py>)
-  - [backend/app/api/admin.py](</mnt/d/AI-native wiki platform/backend/app/api/admin.py>)
-  - [backend/app/core/observability.py](</mnt/d/AI-native wiki platform/backend/app/core/observability.py>)
+  - [backend/app/api/review.py](../backend/app/api/review.py)
+  - [backend/app/services/lint.py](../backend/app/services/lint.py)
+  - [backend/app/services/audit.py](../backend/app/services/audit.py)
+  - [backend/app/api/admin.py](../backend/app/api/admin.py)
+  - [backend/app/core/observability.py](../backend/app/core/observability.py)
 
 #### Pattern tu `open-notebook`
 

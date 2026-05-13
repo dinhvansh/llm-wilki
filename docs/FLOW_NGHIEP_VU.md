@@ -196,7 +196,7 @@ No phai la artifact nghiep vu co the review va truy vet.
 
 Tai lieu chuan nam o:
 
-- [BPM Flow Standard](</mnt/d/AI-native wiki platform/docs/BPM_FLOW_STANDARD.md>)
+- [BPM Flow Standard](BPM_FLOW_STANDARD.md)
 
 Nguyen tac ap dung:
 

@@ -1,6 +1,7 @@
 .claude/
 _tmp_arkon/
 tmp/
+open-notebook-main/
 
 # OS / editor
 .DS_Store
@@ -34,11 +35,22 @@ node_modules/
 .next/
 out/
 dist/
+*.tsbuildinfo
 
 # Local uploads / temp artifacts
 backend/uploads/
 backend/app/uploads/
 backend/.local/
+backend/test-uploads/
+backend/*.docx
+
+# Generated eval reports
+backend/evals/last_*_report.json
+backend/evals/last_*_report.md
+backend/evals/last_quality_compare.json
+backend/evals/last_quality_compare.md
+backend/evals/last_document_qa_suite.json
+backend/evals/last_document_qa_suite.md
 
 # Archives / exports / backups
 *.zip
