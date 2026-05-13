@@ -147,6 +147,28 @@ export function useRestoreSource(sourceId: string) {
   })
 }
 
+export function useArchiveSourceAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceId: string) => sourceService.archive(sourceId),
+    onSuccess: (source) => {
+      qc.invalidateQueries({ queryKey: ['source', source.id] })
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
+export function useRestoreSourceAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceId: string) => sourceService.restore(sourceId),
+    onSuccess: (source) => {
+      qc.invalidateQueries({ queryKey: ['source', source.id] })
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
 export function useUpdateSourceMetadata(sourceId: string) {
   const qc = useQueryClient()
   return useMutation({

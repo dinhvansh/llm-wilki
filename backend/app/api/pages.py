@@ -13,6 +13,7 @@ from app.core.identity import require_authenticated_actor, require_permission, r
 from app.schemas.source import PageOut, PaginatedResponse
 from app.services.auth import Actor, actor_metadata
 from app.services.pages import (
+    archive_page,
     PageEditConflict,
     build_editor_insert_helpers,
     bulk_update_pages,
@@ -28,6 +29,7 @@ from app.services.pages import (
     list_pages as list_pages_service,
     list_timeline_events,
     publish_page,
+    restore_page,
     restore_page_version,
     unpublish_page,
     update_page_content,
@@ -221,7 +223,7 @@ async def upload_page_asset(file: UploadFile = File(...), actor: Actor = Depends
 
 @router.post("/bulk")
 async def bulk_pages_route(payload: BulkPagesPayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
-    if payload.action not in {"publish", "unpublish"}:
+    if payload.action not in {"publish", "unpublish", "archive", "restore"}:
         raise HTTPException(status_code=400, detail="Unsupported bulk page action")
     return bulk_update_pages(db, payload.pageIds, payload.action, actor=actor.name, actor_metadata=actor_metadata(actor))
 
@@ -264,6 +266,22 @@ async def publish_page_route(page_id: str, db: Session = Depends(get_db), actor:
 @router.post("/{page_id}/unpublish", response_model=PageOut)
 async def unpublish_page_route(page_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
     page = unpublish_page(db, page_id, actor=actor.name, actor_metadata=actor_metadata(actor))
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return page
+
+
+@router.post("/{page_id}/archive", response_model=PageOut)
+async def archive_page_route(page_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    page = archive_page(db, page_id, actor=actor.name, actor_metadata=actor_metadata(actor))
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return page
+
+
+@router.post("/{page_id}/restore", response_model=PageOut)
+async def restore_page_route(page_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
+    page = restore_page(db, page_id, actor=actor.name, actor_metadata=actor_metadata(actor))
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return page

@@ -477,6 +477,45 @@ def unpublish_page(db: Session, page_id: str, actor: str = "Current User", actor
     return get_page_by_slug(db, page.slug)
 
 
+def archive_page(db: Session, page_id: str, actor: str = "Current User", actor_metadata: dict | None = None) -> dict | None:
+    page = get_page_by_id(db, page_id)
+    if not page:
+        return None
+    page.status = "archived"
+    page.published_at = None
+    page.last_composed_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="archive",
+        object_type="page",
+        object_id=page.id,
+        actor=actor,
+        summary=f"Moved page `{page.title}` to trash",
+        metadata={"slug": page.slug, "versionNo": page.current_version, **(actor_metadata or {})},
+    )
+    db.commit()
+    return get_page_by_slug(db, page.slug)
+
+
+def restore_page(db: Session, page_id: str, actor: str = "Current User", actor_metadata: dict | None = None) -> dict | None:
+    page = get_page_by_id(db, page_id)
+    if not page:
+        return None
+    page.status = "draft"
+    page.last_composed_at = datetime.now(timezone.utc)
+    create_audit_log(
+        db,
+        action="restore",
+        object_type="page",
+        object_id=page.id,
+        actor=actor,
+        summary=f"Restored page `{page.title}` from trash",
+        metadata={"slug": page.slug, "versionNo": page.current_version, **(actor_metadata or {})},
+    )
+    db.commit()
+    return get_page_by_slug(db, page.slug)
+
+
 def update_page_content(
     db: Session,
     page_id: str,
@@ -553,6 +592,10 @@ def bulk_update_pages(db: Session, page_ids: list[str], action: str, actor: str 
             result = publish_page(db, page_id, actor=actor, actor_metadata=actor_metadata)
         elif action == "unpublish":
             result = unpublish_page(db, page_id, actor=actor, actor_metadata=actor_metadata)
+        elif action == "archive":
+            result = archive_page(db, page_id, actor=actor, actor_metadata=actor_metadata)
+        elif action == "restore":
+            result = restore_page(db, page_id, actor=actor, actor_metadata=actor_metadata)
         else:
             result = None
         if result:

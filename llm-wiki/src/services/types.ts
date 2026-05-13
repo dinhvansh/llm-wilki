@@ -85,6 +85,8 @@ export interface IPageService {
   compose(payload: { topic: string; sourceIds?: string[]; contentMd?: string; contentJson?: PageBlock[]; collectionId?: string; pageType?: string }): Promise<Page>
   publish(pageId: string): Promise<Page>
   unpublish(pageId: string): Promise<Page>
+  archive(pageId: string): Promise<Page>
+  restore(pageId: string): Promise<Page>
   update(pageId: string, payload: { contentMd: string; contentJson?: PageBlock[] }): Promise<Page>
 }
 

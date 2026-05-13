@@ -19,7 +19,7 @@ import {
   type PageBlock,
 } from '@/lib/page-blocks'
 import { formatDate, formatDateTime, cn } from '@/lib/utils'
-import { usePage, usePublishPage, useUnpublishPage, useUpdatePage, usePages } from '@/hooks/use-pages'
+import { useArchivePage, usePage, usePublishPage, useRestorePage, useUnpublishPage, useUpdatePage, usePages } from '@/hooks/use-pages'
 import { useAssignPageCollection, useCollections } from '@/hooks/use-collections'
 import { useAssessDiagramPage, useDiagrams, useGenerateDiagramFromPage } from '@/hooks/use-diagrams'
 import { useAuth } from '@/providers/auth-provider'
@@ -113,6 +113,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const assignCollection = useAssignPageCollection()
   const publishMutation = usePublishPage()
   const unpublishMutation = useUnpublishPage()
+  const archiveMutation = useArchivePage()
+  const restoreMutation = useRestorePage()
   const updateMutation = useUpdatePage()
   const generateDiagramMutation = useGenerateDiagramFromPage()
   const { data: bpmAssessment } = useAssessDiagramPage(page?.id ?? '')
@@ -381,6 +383,11 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
       <RefreshCw className="h-4 w-4" />
       <span>This page is currently under review.</span>
     </div>
+  ) : page.status === 'archived' ? (
+    <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-100 px-4 py-2 text-sm text-slate-700">
+      <Trash2 className="h-4 w-4" />
+      <span>This page is in trash. Restore it when you want to keep working on it.</span>
+    </div>
   ) : null
 
   return (
@@ -431,13 +438,32 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 {unpublishMutation.isPending ? 'Unpublishing...' : 'Unpublish'}
               </button>
             )}
+            {page.status === 'archived' ? (
+              <button
+                onClick={() => restoreMutation.mutate(page.id)}
+                disabled={restoreMutation.isPending || !canEdit}
+                className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4" />
+                {restoreMutation.isPending ? 'Restoring...' : 'Restore'}
+              </button>
+            ) : (
+              <button
+                onClick={() => archiveMutation.mutate(page.id)}
+                disabled={archiveMutation.isPending || !canEdit}
+                className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                {archiveMutation.isPending ? 'Moving to trash...' : 'Move to trash'}
+              </button>
+            )}
             <button
               onClick={() => {
                 if (!canEdit) return
                 setIsEditing(!isEditing)
                 if (!isEditing) setEditBlocks(pageBlocks)
               }}
-              disabled={!canEdit}
+              disabled={!canEdit || page.status === 'archived'}
               className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm transition-colors hover:bg-accent"
             >
               <PenSquare className="h-4 w-4" />

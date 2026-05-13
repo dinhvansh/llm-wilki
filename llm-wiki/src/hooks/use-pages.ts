@@ -89,6 +89,32 @@ export function useUnpublishPage() {
   })
 }
 
+export function useArchivePage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pageId: string) => pageService.archive(pageId),
+    onSuccess: (page) => {
+      qc.invalidateQueries({ queryKey: ['pages'] })
+      qc.invalidateQueries({ queryKey: ['page', page.slug] })
+      qc.invalidateQueries({ queryKey: ['page-audit', page.id] })
+      qc.invalidateQueries({ queryKey: ['review-queue'] })
+    },
+  })
+}
+
+export function useRestorePage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pageId: string) => pageService.restore(pageId),
+    onSuccess: (page) => {
+      qc.invalidateQueries({ queryKey: ['pages'] })
+      qc.invalidateQueries({ queryKey: ['page', page.slug] })
+      qc.invalidateQueries({ queryKey: ['page-audit', page.id] })
+      qc.invalidateQueries({ queryKey: ['review-queue'] })
+    },
+  })
+}
+
 export function useUpdatePage() {
   const qc = useQueryClient()
   return useMutation({

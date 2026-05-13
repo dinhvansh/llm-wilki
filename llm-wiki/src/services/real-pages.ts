@@ -61,6 +61,12 @@ export function createRealPageService(): IPageService {
     async unpublish(pageId) {
       return apiRequest<Page>(`/pages/${pageId}/unpublish`, { method: 'POST' })
     },
+    async archive(pageId) {
+      return apiRequest<Page>(`/pages/${pageId}/archive`, { method: 'POST' })
+    },
+    async restore(pageId) {
+      return apiRequest<Page>(`/pages/${pageId}/restore`, { method: 'POST' })
+    },
     async update(pageId, payload) {
       return apiRequest<Page>(`/pages/${pageId}/update`, {
         method: 'POST',

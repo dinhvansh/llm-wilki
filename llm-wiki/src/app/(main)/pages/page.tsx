@@ -8,12 +8,12 @@ import { EmptyState } from '@/components/data-display/empty-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { formatRelativeTime, cn } from '@/lib/utils'
-import { useComposePage, usePages } from '@/hooks/use-pages'
+import { useArchivePage, useComposePage, usePages, useRestorePage } from '@/hooks/use-pages'
 import { useCollections } from '@/hooks/use-collections'
 import { PAGE_TYPE_CONFIG, PAGE_STATUS_CONFIG } from '@/lib/constants'
 import type { PageStatus, PageType } from '@/lib/constants'
 import { Input } from '@/components/ui/input'
-import { Search, LayoutGrid, List, Plus, Sparkles, X, FileText, BookOpen, CheckSquare, Lightbulb } from 'lucide-react'
+import { Search, LayoutGrid, List, Plus, Sparkles, X, FileText, BookOpen, CheckSquare, Lightbulb, RefreshCw, Trash2 } from 'lucide-react'
 
 type ViewMode = 'grid' | 'table'
 type SortKey = 'updated' | 'title' | 'status' | 'type'
@@ -90,6 +90,8 @@ export default function PagesPage() {
   const [draftCollectionId, setDraftCollectionId] = useState('')
   const [composerError, setComposerError] = useState<string | null>(null)
   const composeMutation = useComposePage()
+  const archiveMutation = useArchivePage()
+  const restoreMutation = useRestorePage()
   const { data: collections } = useCollections()
 
   useEffect(() => {
@@ -109,6 +111,14 @@ export default function PagesPage() {
   const selectedTemplate = draftTemplates.find(template => template.id === draftTemplate) ?? draftTemplates[0]
   const selectedCollectionName = collections?.find(collection => collection.id === draftCollectionId)?.name
   const isCreatingDraft = composeMutation.isPending
+
+  const handlePageTrashToggle = async (pageId: string, archived: boolean) => {
+    if (archived) {
+      await restoreMutation.mutateAsync(pageId)
+      return
+    }
+    await archiveMutation.mutateAsync(pageId)
+  }
 
   const createDraft = async () => {
     const title = draftTitle.trim()
@@ -415,7 +425,22 @@ export default function PagesPage() {
                      <StatusBadge status={page.status} type="page" />
                      <StatusBadge status={page.pageType} type="pageType" />
                    </div>
-                   <span className="text-xs text-muted-foreground">v{page.currentVersion}</span>
+                   <div className="flex items-center gap-2">
+                     <span className="text-xs text-muted-foreground">v{page.currentVersion}</span>
+                     <button
+                       type="button"
+                       onClick={async event => {
+                         event.preventDefault()
+                         event.stopPropagation()
+                         await handlePageTrashToggle(page.id, page.status === 'archived')
+                       }}
+                       disabled={archiveMutation.isPending || restoreMutation.isPending}
+                       className="rounded-full border border-border p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                       aria-label={page.status === 'archived' ? 'Restore page' : 'Move page to trash'}
+                     >
+                       {page.status === 'archived' ? <RefreshCw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                     </button>
+                   </div>
                  </div>
                  <h3 className="font-semibold text-sm group-hover:text-primary transition-colors mb-1">{page.title}</h3>
                  <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{page.summary}</p>
@@ -448,6 +473,7 @@ export default function PagesPage() {
                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Collection</th>
                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Updated</th>
                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Owner</th>
+                   <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Trash</th>
                  </tr>
                </thead>
                <tbody>
@@ -463,6 +489,17 @@ export default function PagesPage() {
                      <td className="px-4 py-3 text-muted-foreground">{collections?.find(collection => collection.id === page.collectionId)?.name ?? 'Standalone'}</td>
                      <td className="px-4 py-3 text-muted-foreground">{formatRelativeTime(page.lastComposedAt)}</td>
                      <td className="px-4 py-3 text-muted-foreground">{page.owner}</td>
+                     <td className="px-4 py-3">
+                       <button
+                         type="button"
+                         onClick={() => handlePageTrashToggle(page.id, page.status === 'archived')}
+                         disabled={archiveMutation.isPending || restoreMutation.isPending}
+                         className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                       >
+                         {page.status === 'archived' ? <RefreshCw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                         {page.status === 'archived' ? 'Restore' : 'Trash'}
+                       </button>
+                     </td>
                    </tr>
                  ))}
                </tbody>

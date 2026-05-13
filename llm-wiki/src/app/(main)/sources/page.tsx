@@ -6,12 +6,12 @@ import { EmptyState } from '@/components/data-display/empty-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { formatRelativeTime } from '@/lib/utils'
-import { useIngestTextSource, useIngestUrlSource, useSources, useUploadSource } from '@/hooks/use-sources'
+import { useArchiveSourceAction, useIngestTextSource, useIngestUrlSource, useRestoreSourceAction, useSources, useUploadSource } from '@/hooks/use-sources'
 import { useCollections } from '@/hooks/use-collections'
 import { SOURCE_TYPE_CONFIG } from '@/lib/constants'
 import type { SourceType } from '@/lib/constants'
 import Link from 'next/link'
-import { Upload, Search, Eye, Link as LinkIcon, FileText } from 'lucide-react'
+import { Upload, Search, Eye, Link as LinkIcon, FileText, RefreshCw, Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 
 export default function SourcesPage() {
@@ -36,6 +36,8 @@ export default function SourcesPage() {
   const uploadMutation = useUploadSource()
   const urlMutation = useIngestUrlSource()
   const textMutation = useIngestTextSource()
+  const archiveMutation = useArchiveSourceAction()
+  const restoreMutation = useRestoreSourceAction()
 
   useEffect(() => {
     const collectionId = new URLSearchParams(window.location.search).get('collectionId') ?? ''
@@ -79,6 +81,14 @@ export default function SourcesPage() {
   }
 
   const sources = data?.data ?? []
+
+  const handleSourceTrashToggle = async (sourceId: string, archived: boolean) => {
+    if (archived) {
+      await restoreMutation.mutateAsync(sourceId)
+      return
+    }
+    await archiveMutation.mutateAsync(sourceId)
+  }
 
   return (
     <div>
@@ -213,6 +223,7 @@ export default function SourcesPage() {
             <option value="indexed">Indexed</option>
             <option value="extracted">Extracted</option>
             <option value="failed">Failed</option>
+            <option value="archived">Trash</option>
           </select>
           <select
             value={collectionFilter}
@@ -273,9 +284,20 @@ export default function SourcesPage() {
                       {source.createdBy}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/sources/${source.id}`} className="flex items-center gap-1 text-xs text-primary hover:underline">
-                        <Eye className="w-3.5 h-3.5" /> View
-                      </Link>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSourceTrashToggle(source.id, Boolean(source.metadataJson?.archived))}
+                          disabled={archiveMutation.isPending || restoreMutation.isPending}
+                          className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                        >
+                          {Boolean(source.metadataJson?.archived) ? <RefreshCw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                          {Boolean(source.metadataJson?.archived) ? 'Restore' : 'Trash'}
+                        </button>
+                        <Link href={`/sources/${source.id}`} className="flex items-center gap-1 text-xs text-primary hover:underline">
+                          <Eye className="w-3.5 h-3.5" /> View
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -125,6 +125,20 @@ export function createMockPageService(): IPageService {
       return { ...page, status: 'draft' as PageStatus }
     },
 
+    async archive(pageId) {
+      await delay(300)
+      const page = MOCK_PAGES.find(p => p.id === pageId)
+      if (!page) throw new Error(`Page ${pageId} not found`)
+      return { ...page, status: 'archived' as PageStatus, publishedAt: undefined, lastComposedAt: new Date().toISOString() }
+    },
+
+    async restore(pageId) {
+      await delay(300)
+      const page = MOCK_PAGES.find(p => p.id === pageId)
+      if (!page) throw new Error(`Page ${pageId} not found`)
+      return { ...page, status: 'draft' as PageStatus, lastComposedAt: new Date().toISOString() }
+    },
+
     async update(pageId, payload) {
       await delay(500)
       const page = MOCK_PAGES.find(p => p.id === pageId)
