@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { pageService } from '@/services'
 import type { PageStatus, PageType } from '@/lib/constants'
+import type { PageBlock } from '@/lib/page-blocks'
 
 export function usePages(params?: {
   page?: number
@@ -91,7 +92,7 @@ export function useUnpublishPage() {
 export function useUpdatePage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ pageId, contentMd }: { pageId: string; contentMd: string }) => pageService.update(pageId, contentMd),
+    mutationFn: ({ pageId, contentMd, contentJson }: { pageId: string; contentMd: string; contentJson?: PageBlock[] }) => pageService.update(pageId, { contentMd, contentJson }),
     onSuccess: (page) => {
       qc.invalidateQueries({ queryKey: ['pages'] })
       qc.invalidateQueries({ queryKey: ['page', page.slug] })
@@ -105,7 +106,7 @@ export function useUpdatePage() {
 export function useComposePage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { topic: string; sourceIds?: string[]; contentMd?: string; collectionId?: string; pageType?: string }) => pageService.compose(payload),
+    mutationFn: (payload: { topic: string; sourceIds?: string[]; contentMd?: string; contentJson?: PageBlock[]; collectionId?: string; pageType?: string }) => pageService.compose(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pages'] })
     },

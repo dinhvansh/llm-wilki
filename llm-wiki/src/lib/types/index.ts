@@ -309,6 +309,7 @@ export interface Page {
   status: PageStatus
   summary: string
   contentMd: string
+  contentJson?: import('@/lib/page-blocks').PageBlock[]
   contentHtml?: string
   currentVersion: number
   lastComposedAt: string

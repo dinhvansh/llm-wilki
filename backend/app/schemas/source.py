@@ -209,6 +209,7 @@ class PageOut(BaseModel):
     status: str
     summary: str
     contentMd: str
+    contentJson: list[dict] = []
     contentHtml: str | None = None
     currentVersion: int
     lastComposedAt: str

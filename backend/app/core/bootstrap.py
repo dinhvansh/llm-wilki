@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.core.demo_data import build_demo_dataset
@@ -40,6 +41,8 @@ from app.services.auth import ensure_dev_admin_user
 
 def init_database(db: Session, seed_demo_data: bool = True) -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_page_content_json_column()
+    _backfill_page_content_json(db)
     ensure_dev_admin_user(db)
     has_sources = db.query(Source.id).first()
     if has_sources:
@@ -76,6 +79,30 @@ def init_database(db: Session, seed_demo_data: bool = True) -> None:
     db.flush()
     db.add_all(ReviewIssue(**record) for record in dataset["review_issues"])
     db.commit()
+
+
+def _ensure_page_content_json_column() -> None:
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("pages")}
+    if "content_json" in columns:
+        return
+    statement = "ALTER TABLE pages ADD COLUMN content_json JSON"
+    with engine.begin() as connection:
+        connection.execute(text(statement))
+
+
+def _backfill_page_content_json(db: Session) -> None:
+    from app.services.page_blocks import markdown_to_blocks
+
+    pages = db.query(Page).all()
+    changed = False
+    for page in pages:
+        if page.content_json:
+            continue
+        page.content_json = markdown_to_blocks(page.content_md)
+        changed = True
+    if changed:
+        db.commit()
 
 
 def _ensure_demo_collections(db: Session) -> None:

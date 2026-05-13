@@ -4,6 +4,7 @@ import type {
   PaginatedResponse, Entity, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
   KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, ManagedUser, Department, AdminRole, Note
 } from '@/lib/types'
+import type { PageBlock } from '@/lib/page-blocks'
 import type { PageStatus, SourceStatus, SeverityLevel, ReviewIssueType } from '@/lib/constants'
 
 export interface ISourceService {
@@ -81,10 +82,10 @@ export interface IPageService {
   getVersions(pageId: string): Promise<PageVersion[]>
   getAudit(pageId: string): Promise<AuditLog[]>
   getDiff(pageId: string, versionNo: number): Promise<{ old: string; new: string }>
-  compose(payload: { topic: string; sourceIds?: string[]; contentMd?: string; collectionId?: string; pageType?: string }): Promise<Page>
+  compose(payload: { topic: string; sourceIds?: string[]; contentMd?: string; contentJson?: PageBlock[]; collectionId?: string; pageType?: string }): Promise<Page>
   publish(pageId: string): Promise<Page>
   unpublish(pageId: string): Promise<Page>
-  update(pageId: string, contentMd: string): Promise<Page>
+  update(pageId: string, payload: { contentMd: string; contentJson?: PageBlock[] }): Promise<Page>
 }
 
 export interface IDiagramService {

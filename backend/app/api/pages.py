@@ -47,12 +47,14 @@ class ComposePayload(BaseModel):
     topic: str
     sourceIds: list[str] = []
     contentMd: str | None = None
+    contentJson: list[dict] | None = None
     collectionId: str | None = None
     pageType: str = "summary"
 
 
 class UpdatePagePayload(BaseModel):
-    contentMd: str
+    contentMd: str | None = None
+    contentJson: list[dict] | None = None
     changeSummary: str | None = None
     expectedVersion: int | None = None
 
@@ -177,6 +179,7 @@ async def compose_page_route(payload: ComposePayload, db: Session = Depends(get_
         payload.topic,
         payload.sourceIds,
         content_md=payload.contentMd,
+        content_json=payload.contentJson,
         collection_id=payload.collectionId,
         page_type=payload.pageType,
     )
@@ -226,7 +229,15 @@ async def bulk_pages_route(payload: BulkPagesPayload, db: Session = Depends(get_
 @router.post("/{page_id}/update", response_model=PageOut)
 async def update_page_route(page_id: str, payload: UpdatePagePayload, db: Session = Depends(get_db), actor: Actor = Depends(require_permission("page:write"))):
     try:
-        page = update_page_content(db, page_id, payload.contentMd, payload.changeSummary, author=actor.name, expected_version=payload.expectedVersion)
+        page = update_page_content(
+            db,
+            page_id,
+            payload.contentMd,
+            payload.changeSummary,
+            author=actor.name,
+            expected_version=payload.expectedVersion,
+            content_json=payload.contentJson,
+        )
     except PageEditConflict as exc:
         raise HTTPException(status_code=409, detail={"message": "Page version conflict", "currentVersion": exc.current_version}) from exc
     if not page:

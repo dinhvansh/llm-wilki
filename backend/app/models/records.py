@@ -337,6 +337,7 @@ class Page(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     summary: Mapped[str] = mapped_column(Text, default="")
     content_md: Mapped[str] = mapped_column(Text, default="")
+    content_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     content_html: Mapped[str | None] = mapped_column(Text)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_composed_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)

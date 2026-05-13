@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.ingest import SENTENCE_RE, build_tags, summarize_text
 from app.models import Claim, GlossaryTerm, Page, PageClaimLink, PageEntityLink, PageLink, PageSourceLink, PageVersion, Source, SourceChunk, TimelineEvent
 from app.services.audit import create_audit_log, list_audit_logs
+from app.services.page_blocks import markdown_to_blocks, normalize_page_document
 from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
 
 
@@ -210,6 +211,7 @@ def serialize_page(
         "status": page.status,
         "summary": page.summary,
         "contentMd": page.content_md,
+        "contentJson": page.content_json or markdown_to_blocks(page.content_md),
         "contentHtml": page.content_html,
         "currentVersion": page.current_version,
         "lastComposedAt": _iso(page.last_composed_at),
@@ -478,10 +480,11 @@ def unpublish_page(db: Session, page_id: str, actor: str = "Current User", actor
 def update_page_content(
     db: Session,
     page_id: str,
-    content_md: str,
+    content_md: str | None,
     change_summary: str | None = None,
     author: str = "Current User",
     expected_version: int | None = None,
+    content_json: list[dict] | None = None,
 ) -> dict | None:
     page = get_page_by_id(db, page_id)
     if not page:
@@ -489,12 +492,14 @@ def update_page_content(
     if expected_version is not None and page.current_version != expected_version:
         raise PageEditConflict(page.current_version)
 
+    normalized_md, normalized_blocks = normalize_page_document(content_md, content_json)
     now = datetime.now(timezone.utc)
-    summary, key_facts = summarize_text(page.title, content_md[:16000])
-    page.content_md = content_md
+    summary, key_facts = summarize_text(page.title, normalized_md[:16000])
+    page.content_md = normalized_md
+    page.content_json = normalized_blocks
     page.summary = summary
     page.key_facts = key_facts
-    page.tags = build_tags(page.title, content_md)
+    page.tags = build_tags(page.title, normalized_md)
     page.status = "draft" if page.status == "published" else page.status
     page.last_composed_at = now
     page.current_version += 1
@@ -503,7 +508,7 @@ def update_page_content(
         id=f"pv-{uuid4().hex[:8]}",
         page_id=page.id,
         version_no=page.current_version,
-        content_md=content_md,
+        content_md=normalized_md,
         change_summary=(change_summary or "Manual draft update")[:255],
         created_at=now,
         created_by_agent_or_user=author,
@@ -647,6 +652,7 @@ def compose_page(
     source_ids: list[str] | None = None,
     *,
     content_md: str | None = None,
+    content_json: list[dict] | None = None,
     collection_id: str | None = None,
     page_type: str = "summary",
 ) -> dict:
@@ -671,7 +677,7 @@ def compose_page(
             source_record = db.query(Source).filter(Source.id.in_(source_ids), Source.collection_id.is_not(None)).first()
             resolved_collection_id = source_record.collection_id if source_record else None
     source_section = "\n".join(f"- Source: {source_id}" for source_id in source_ids) if source_ids else "- No linked sources yet."
-    draft_content_md = content_md.strip() if content_md and content_md.strip() else "\n".join(
+    default_content_md = "\n".join(
         [
             f"# {normalized_topic}",
             "",
@@ -684,7 +690,8 @@ def compose_page(
             source_section,
         ]
     )
-    if content_md and content_md.strip():
+    draft_content_md, draft_content_json = normalize_page_document(content_md or default_content_md, content_json)
+    if (content_md and content_md.strip()) or content_json:
         summary = _lightweight_summary(draft_content_md, normalized_topic)
         key_facts: list[str] = []
     else:
@@ -695,6 +702,7 @@ def compose_page(
         slug=unique_slug,
         summary=summary,
         content_md=draft_content_md,
+        content_json=draft_content_json,
         owner="Current User",
         page_type=page_type,
         status="draft",
@@ -711,7 +719,7 @@ def compose_page(
         object_id=page.id,
         actor="Current User",
         summary=f"Composed draft page `{page.title}`",
-        metadata={"slug": page.slug, "sourceIds": source_ids, "collectionId": resolved_collection_id, "directDraft": bool(content_md)},
+        metadata={"slug": page.slug, "sourceIds": source_ids, "collectionId": resolved_collection_id, "directDraft": bool(content_md or content_json)},
     )
     db.commit()
     return get_page_by_slug(db, page.slug)
@@ -724,6 +732,7 @@ def create_page_with_version(
     slug: str,
     summary: str,
     content_md: str,
+    content_json: list[dict] | None = None,
     owner: str,
     page_type: str,
     status: str,
@@ -742,6 +751,7 @@ def create_page_with_version(
         status=status,
         summary=summary,
         content_md=content_md,
+        content_json=content_json or markdown_to_blocks(content_md),
         content_html=None,
         current_version=1,
         last_composed_at=now,

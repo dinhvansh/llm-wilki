@@ -49,6 +49,7 @@ export function createRealPageService(): IPageService {
           topic: payload.topic,
           sourceIds: payload.sourceIds ?? [],
           contentMd: payload.contentMd,
+          contentJson: payload.contentJson,
           collectionId: payload.collectionId,
           pageType: payload.pageType,
         }),
@@ -60,10 +61,10 @@ export function createRealPageService(): IPageService {
     async unpublish(pageId) {
       return apiRequest<Page>(`/pages/${pageId}/unpublish`, { method: 'POST' })
     },
-    async update(pageId, contentMd) {
+    async update(pageId, payload) {
       return apiRequest<Page>(`/pages/${pageId}/update`, {
         method: 'POST',
-        body: JSON.stringify({ contentMd, changeSummary: 'Edited from frontend' }),
+        body: JSON.stringify({ contentMd: payload.contentMd, contentJson: payload.contentJson, changeSummary: 'Edited from frontend' }),
       })
     },
   }

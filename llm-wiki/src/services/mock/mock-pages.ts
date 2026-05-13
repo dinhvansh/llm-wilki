@@ -1,4 +1,5 @@
 import type { AuditLog, ExplorerEntity, GlossaryTerm, Page, PageVersion, TimelineEvent } from '@/lib/types'
+import { markdownToPageBlocks, pageBlocksToMarkdown } from '@/lib/page-blocks'
 import type { IPageService } from '../types'
 import { MOCK_PAGES, MOCK_PAGE_VERSIONS } from './mock-data'
 import type { PageStatus } from '@/lib/constants'
@@ -97,6 +98,7 @@ export function createMockPageService(): IPageService {
         status: 'draft',
         summary: `Draft page generated for topic: ${topic}`,
         contentMd: payload.contentMd || `# ${topic}\n\nDraft content for this topic...`,
+        contentJson: payload.contentJson || markdownToPageBlocks(payload.contentMd || `# ${topic}\n\nDraft content for this topic...`),
         currentVersion: 1,
         lastComposedAt: new Date().toISOString(),
         owner: 'PageComposer Agent',
@@ -123,11 +125,17 @@ export function createMockPageService(): IPageService {
       return { ...page, status: 'draft' as PageStatus }
     },
 
-    async update(pageId, contentMd) {
+    async update(pageId, payload) {
       await delay(500)
       const page = MOCK_PAGES.find(p => p.id === pageId)
       if (!page) throw new Error(`Page ${pageId} not found`)
-      return { ...page, contentMd, currentVersion: page.currentVersion + 1, lastComposedAt: new Date().toISOString() }
+      return {
+        ...page,
+        contentMd: payload.contentMd || pageBlocksToMarkdown(payload.contentJson || page.contentJson || markdownToPageBlocks(page.contentMd)),
+        contentJson: payload.contentJson || markdownToPageBlocks(payload.contentMd),
+        currentVersion: page.currentVersion + 1,
+        lastComposedAt: new Date().toISOString(),
+      }
     },
   }
 }

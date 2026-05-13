@@ -1,12 +1,14 @@
 'use client'
 import { useDeferredValue, useEffect, useRef, useState, use, type ClipboardEvent } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
 import { StatusBadge } from '@/components/data-display/status-badge'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { MarkdownRenderer } from '@/components/data-display/markdown-renderer'
+import { createHeadingBlock, createImageBlock, createParagraphBlock, markdownToPageBlocks, normalizePageBlocks, pageBlocksToMarkdown, type PageBlock } from '@/lib/page-blocks'
 import { formatDate, formatDateTime, cn } from '@/lib/utils'
 import { usePage, usePublishPage, useUnpublishPage, useUpdatePage, usePages } from '@/hooks/use-pages'
 import { useAssignPageCollection, useCollections } from '@/hooks/use-collections'
@@ -18,7 +20,7 @@ import {
   Edit3, AlertTriangle, RefreshCw,
   Layers, Tag, FileText, Link2, CheckCircle,
   PanelLeft, Search, Star, CalendarDays, ListChecks,
-  Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check, ImagePlus,
+  Sparkles, PenSquare, ClipboardList, Wand2, Copy, Check, ImagePlus, Plus, Trash2,
 } from 'lucide-react'
 
 type SavedView = 'all' | 'drafts' | 'review' | 'stale' | 'source-linked'
@@ -53,22 +55,45 @@ type UploadedPageAsset = {
   size: number
 }
 
-function withEditorSpacing(currentContent: string, cursorPosition: number, insertedContent: string) {
-  const needsLeadingBreak = cursorPosition > 0 && !currentContent.slice(0, cursorPosition).endsWith('\n')
-  const needsTrailingBreak = !insertedContent.endsWith('\n')
-  return `${needsLeadingBreak ? '\n' : ''}${insertedContent}${needsTrailingBreak ? '\n' : ''}`
+function listValueToLines(items: string[]) {
+  return items.join('\n')
+}
+
+function linesToListValue(value: string) {
+  return value.split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+function todoItemsToText(items: Array<{ text: string; checked: boolean }>) {
+  return items.map(item => `- [${item.checked ? 'x' : ' '}] ${item.text}`).join('\n')
+}
+
+function textToTodoItems(value: string) {
+  return value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^\-\s+\[([xX ])\]\s+(.+)$/)
+      if (match) return { checked: match[1].toLowerCase() === 'x', text: match[2] }
+      return { checked: false, text: line.replace(/^\-\s+/, '') }
+    })
+}
+
+function isTextBlock(block: PageBlock): block is Extract<PageBlock, { type: 'heading' | 'paragraph' | 'quote' }> {
+  return block.type === 'heading' || block.type === 'paragraph' || block.type === 'quote'
 }
 
 export default function PageDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
   const [leftPanelOpen, setLeftPanelOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState('')
+  const [editBlocks, setEditBlocks] = useState<PageBlock[]>([])
   const [pageSearch, setPageSearch] = useState('')
   const [savedView, setSavedView] = useState<SavedView>('all')
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
   const [imagePasteState, setImagePasteState] = useState<'idle' | 'pasting' | 'ready' | 'failed'>('idle')
-  const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
+  const blockInputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({})
 
   const { data: page, isLoading, isError, error, refetch } = usePage(slug)
   const { data: pagesData } = usePages({ pageSize: 100, sort: 'title' }, { enabled: leftPanelOpen || (page?.relatedPageIds?.length ?? 0) > 0 })
@@ -84,6 +109,9 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const router = useRouter()
   const deferredPageSearch = useDeferredValue(pageSearch)
   const canEdit = hasRole('editor', 'reviewer', 'admin')
+  const pageBlocks = normalizePageBlocks(page?.contentJson ?? markdownToPageBlocks(page?.contentMd))
+  const renderedMarkdown = pageBlocksToMarkdown(pageBlocks)
+  const editMarkdown = pageBlocksToMarkdown(editBlocks)
 
   useEffect(() => {
     if (!isEditing || !canEdit || !page?.id) return
@@ -92,19 +120,24 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         if (!updateMutation.isPending) {
-          updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })
+          updateMutation.mutate({ pageId: page.id, contentMd: editMarkdown, contentJson: normalizePageBlocks(editBlocks) }, { onSuccess: () => setIsEditing(false) })
         }
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, editContent, isEditing, page?.id, updateMutation])
+  }, [canEdit, editBlocks, editMarkdown, isEditing, page?.id, updateMutation])
 
   useEffect(() => {
     if (!page?.id) return
     setLeftPanelOpen(page.status !== 'draft')
   }, [page?.id, page?.status])
+
+  useEffect(() => {
+    if (!page?.id) return
+    setEditBlocks(normalizePageBlocks(page.contentJson ?? markdownToPageBlocks(page.contentMd)))
+  }, [page?.id, page?.contentMd, page?.contentJson])
 
   if (isLoading) return <LoadingSpinner label="Loading page..." />
   if (isError) return <ErrorState message={(error as Error)?.message ?? 'Failed to load page'} onRetry={() => refetch()} />
@@ -143,7 +176,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
 
   const copyMarkdown = async () => {
     try {
-      await navigator.clipboard.writeText(isEditing ? editContent : page.contentMd)
+      await navigator.clipboard.writeText(isEditing ? editMarkdown : renderedMarkdown)
       setCopyState('copied')
       window.setTimeout(() => setCopyState('idle'), 1800)
     } catch {
@@ -154,29 +187,20 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
   const insertIntoEditor = (content: string) => {
     if (!canEdit) return
     if (!isEditing) {
-      setEditContent(page.contentMd)
+      setEditBlocks(pageBlocks)
       setIsEditing(true)
     }
 
-    const textarea = editorRef.current
-    if (!textarea) {
-      setEditContent(prev => `${prev.trimEnd()}${content}`)
-      return
-    }
-
-    const start = textarea.selectionStart ?? editContent.length
-    const end = textarea.selectionEnd ?? start
-    const nextContent = `${editContent.slice(0, start)}${content}${editContent.slice(end)}`
-    setEditContent(nextContent)
-
-    window.requestAnimationFrame(() => {
-      const nextCursor = start + content.length
-      textarea.focus()
-      textarea.setSelectionRange(nextCursor, nextCursor)
+    const insertedBlocks = markdownToPageBlocks(content)
+    setEditBlocks(current => {
+      const base = normalizePageBlocks(current)
+      const activeIndex = activeBlockId ? base.findIndex(block => block.id === activeBlockId) : -1
+      if (activeIndex === -1) return [...base, ...insertedBlocks]
+      return [...base.slice(0, activeIndex + 1), ...insertedBlocks, ...base.slice(activeIndex + 1)]
     })
   }
 
-  const handleEditorPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  const handleEditorPaste = (blockId: string) => async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find(item => item.type.startsWith('image/'))
     if (!imageItem) return
 
@@ -198,16 +222,57 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
       })
 
       const plainText = event.clipboardData.getData('text/plain').trim()
-      const imageMarkdown = `![${uploadedAsset.filename}](${uploadedAsset.url})`
-      const fragments = [plainText, imageMarkdown].filter(Boolean)
-      const content = withEditorSpacing(editContent, editorRef.current?.selectionStart ?? editContent.length, fragments.join('\n\n'))
-      insertIntoEditor(content)
+      setEditBlocks(current => {
+        const base = normalizePageBlocks(current)
+        const index = base.findIndex(block => block.id === blockId)
+        if (index === -1) return [...base, createImageBlock(uploadedAsset.url, uploadedAsset.filename)]
+
+        const next = [...base]
+        const target = next[index]
+        const imageBlock = createImageBlock(uploadedAsset.url, uploadedAsset.filename)
+        if (isTextBlock(target)) {
+          const input = blockInputRefs.current[blockId]
+          const start = input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.selectionStart ?? target.text.length : target.text.length
+          const end = input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.selectionEnd ?? start : start
+          const insertedText = plainText ? `${plainText}\n` : ''
+          next[index] = { ...target, text: `${target.text.slice(0, start)}${insertedText}${target.text.slice(end)}` }
+          next.splice(index + 1, 0, imageBlock)
+        } else if (plainText) {
+          next.splice(index + 1, 0, createParagraphBlock(plainText), imageBlock)
+        } else {
+          next.splice(index + 1, 0, imageBlock)
+        }
+        return next
+      })
       setImagePasteState('ready')
     } catch {
       setImagePasteState('failed')
     } finally {
       window.setTimeout(() => setImagePasteState('idle'), 2200)
     }
+  }
+
+  const updateBlock = (blockId: string, updater: (block: PageBlock) => PageBlock) => {
+    setEditBlocks(current => normalizePageBlocks(current).map(block => (block.id === blockId ? updater(block) : block)))
+  }
+
+  const removeBlock = (blockId: string) => {
+    setEditBlocks(current => {
+      const next = normalizePageBlocks(current).filter(block => block.id !== blockId)
+      return next.length ? next : [createParagraphBlock('')]
+    })
+  }
+
+  const appendBlock = (kind: 'paragraph' | 'heading' | 'todo_list') => {
+    if (kind === 'heading') {
+      setEditBlocks(current => [...normalizePageBlocks(current), createHeadingBlock('New section', 2)])
+      return
+    }
+    if (kind === 'todo_list') {
+      setEditBlocks(current => [...normalizePageBlocks(current), { id: `blk-${Date.now()}`, type: 'todo_list', items: [{ text: '', checked: false }] }])
+      return
+    }
+    setEditBlocks(current => [...normalizePageBlocks(current), createParagraphBlock('')])
   }
 
   const statusBanner = page.status === 'stale' ? (
@@ -274,7 +339,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
               onClick={() => {
                 if (!canEdit) return
                 setIsEditing(!isEditing)
-                if (!isEditing) setEditContent(page.contentMd)
+                if (!isEditing) setEditBlocks(pageBlocks)
               }}
               disabled={!canEdit}
               className="flex items-center gap-1.5 rounded-full border border-input px-3 py-1.5 text-sm transition-colors hover:bg-accent"
@@ -461,34 +526,131 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 </div>
 
                 <div className="rounded-md border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  Tip: paste screenshots directly from your clipboard, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
+                  Tip: this editor stores note blocks directly. Paste screenshots into a text block, then press <span className="font-medium text-foreground">Ctrl/Cmd + S</span> to save the draft quickly.
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <Edit3 className="h-3.5 w-3.5" />
                     Edit
                   </div>
-                  <textarea
-                    ref={editorRef}
-                    value={editContent}
-                    onChange={event => setEditContent(event.target.value)}
-                    onPaste={handleEditorPaste}
-                    className="min-h-[72vh] w-full rounded-lg border border-input bg-background p-5 text-sm leading-7 resize-y"
-                    placeholder="Type your note here..."
-                  />
+                  <div className="space-y-3">
+                    {editBlocks.map(block => (
+                      <div key={block.id} className="rounded-xl border border-border bg-background p-4 shadow-sm">
+                        <div className="mb-3 flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          <span>{block.type.replace('_', ' ')}</span>
+                          <button type="button" onClick={() => removeBlock(block.id)} className="inline-flex items-center gap-1 text-xs hover:text-foreground">
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Remove
+                          </button>
+                        </div>
+
+                        {block.type === 'heading' && (
+                          <div className="space-y-2">
+                            <select
+                              value={block.level}
+                              onChange={event => updateBlock(block.id, current => current.type === 'heading' ? { ...current, level: Number(event.target.value) } : current)}
+                              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                            >
+                              {[1, 2, 3, 4].map(level => <option key={level} value={level}>Heading {level}</option>)}
+                            </select>
+                            <input
+                              ref={node => { blockInputRefs.current[block.id] = node }}
+                              value={block.text}
+                              onFocus={() => setActiveBlockId(block.id)}
+                              onChange={event => updateBlock(block.id, current => current.type === 'heading' ? { ...current, text: event.target.value } : current)}
+                              className="w-full border-0 bg-transparent p-0 text-3xl font-semibold tracking-tight outline-none"
+                              placeholder="Section title"
+                            />
+                          </div>
+                        )}
+
+                        {block.type === 'paragraph' && (
+                          <textarea
+                            ref={node => { blockInputRefs.current[block.id] = node }}
+                            value={block.text}
+                            onFocus={() => setActiveBlockId(block.id)}
+                            onChange={event => updateBlock(block.id, current => current.type === 'paragraph' ? { ...current, text: event.target.value } : current)}
+                            onPaste={handleEditorPaste(block.id)}
+                            className="min-h-28 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
+                            placeholder="Write a paragraph..."
+                          />
+                        )}
+
+                        {block.type === 'quote' && (
+                          <textarea
+                            ref={node => { blockInputRefs.current[block.id] = node }}
+                            value={block.text}
+                            onFocus={() => setActiveBlockId(block.id)}
+                            onChange={event => updateBlock(block.id, current => current.type === 'quote' ? { ...current, text: event.target.value } : current)}
+                            onPaste={handleEditorPaste(block.id)}
+                            className="min-h-24 w-full resize-y border-l-2 border-primary/40 bg-transparent pl-4 text-base italic leading-7 outline-none"
+                            placeholder="Quoted note..."
+                          />
+                        )}
+
+                        {block.type === 'bullet_list' && (
+                          <textarea
+                            value={listValueToLines(block.items)}
+                            onFocus={() => setActiveBlockId(block.id)}
+                            onChange={event => updateBlock(block.id, current => current.type === 'bullet_list' ? { ...current, items: linesToListValue(event.target.value) } : current)}
+                            className="min-h-24 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
+                            placeholder="One bullet per line"
+                          />
+                        )}
+
+                        {block.type === 'todo_list' && (
+                          <textarea
+                            value={todoItemsToText(block.items)}
+                            onFocus={() => setActiveBlockId(block.id)}
+                            onChange={event => updateBlock(block.id, current => current.type === 'todo_list' ? { ...current, items: textToTodoItems(event.target.value) } : current)}
+                            className="min-h-24 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 outline-none"
+                            placeholder="- [ ] Follow up"
+                          />
+                        )}
+
+                        {block.type === 'image' && (
+                          <div className="space-y-3">
+                            <div className="relative h-[28rem] w-full overflow-hidden rounded-lg border border-border bg-muted/20">
+                              <Image src={block.url} alt={block.caption || block.alt || 'Note image'} fill className="object-contain" unoptimized />
+                            </div>
+                            <input
+                              value={block.caption || ''}
+                              onChange={event => updateBlock(block.id, current => current.type === 'image' ? { ...current, caption: event.target.value, alt: event.target.value } : current)}
+                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              placeholder="Add an image caption"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => appendBlock('paragraph')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+                      <Plus className="h-3.5 w-3.5" />
+                      Paragraph
+                    </button>
+                    <button type="button" onClick={() => appendBlock('heading')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+                      <Plus className="h-3.5 w-3.5" />
+                      Heading
+                    </button>
+                    <button type="button" onClick={() => appendBlock('todo_list')} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent">
+                      <Plus className="h-3.5 w-3.5" />
+                      Todo list
+                    </button>
+                  </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <ImagePlus className="h-3.5 w-3.5 text-primary" />
                     {imagePasteState === 'pasting' && <span>Uploading clipboard image...</span>}
                     {imagePasteState === 'ready' && <span>Clipboard text and image were inserted into the draft.</span>}
                     {imagePasteState === 'failed' && <span>Could not upload the clipboard image.</span>}
-                    {imagePasteState === 'idle' && <span>Paste text, screenshots, or both with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
+                    {imagePasteState === 'idle' && <span>Paste text, screenshots, or both inside a text block with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editContent }, { onSuccess: () => setIsEditing(false) })}
+                    onClick={() => updateMutation.mutate({ pageId: page.id, contentMd: editMarkdown, contentJson: normalizePageBlocks(editBlocks) }, { onSuccess: () => setIsEditing(false) })}
                     disabled={updateMutation.isPending || !canEdit}
                     className="rounded-full border border-input px-4 py-2 text-sm hover:bg-accent"
                   >
@@ -515,7 +677,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                       <button
                         type="button"
                         onClick={() => {
-                          setEditContent(page.contentMd)
+                          setEditBlocks(pageBlocks)
                           setIsEditing(true)
                         }}
                         className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
@@ -533,7 +695,7 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                 </div>
 
                 <div className="rounded-lg border border-border bg-card px-8 py-8">
-                  <MarkdownRenderer content={page.contentMd} className="prose-headings:tracking-tight prose-p:text-[15px] prose-p:leading-7" />
+                  <MarkdownRenderer content={renderedMarkdown} className="prose-headings:tracking-tight prose-p:text-[15px] prose-p:leading-7" />
                 </div>
 
                 {(relatedDiagrams?.data?.length ?? 0) > 0 && (
