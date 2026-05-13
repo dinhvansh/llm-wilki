@@ -1,14 +1,23 @@
 'use client'
 import { useDeferredValue, useEffect, useRef, useState, use, type ClipboardEvent, type DragEvent } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
 import { StatusBadge } from '@/components/data-display/status-badge'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { MarkdownRenderer } from '@/components/data-display/markdown-renderer'
-import { createHeadingBlock, createImageBlock, createParagraphBlock, markdownToPageBlocks, normalizePageBlocks, pageBlocksToMarkdown, type PageBlock } from '@/lib/page-blocks'
+import {
+  createHeadingBlock,
+  createImageBlock,
+  createParagraphBlock,
+  displayPageAssetUrl,
+  htmlToPageBlocks,
+  markdownToPageBlocks,
+  normalizePageBlocks,
+  pageBlocksToMarkdown,
+  type PageBlock,
+} from '@/lib/page-blocks'
 import { formatDate, formatDateTime, cn } from '@/lib/utils'
 import { usePage, usePublishPage, useUnpublishPage, useUpdatePage, usePages } from '@/hooks/use-pages'
 import { useAssignPageCollection, useCollections } from '@/hooks/use-collections'
@@ -203,6 +212,21 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     })
   }
 
+  const insertBlocksAfter = (blockId: string, blocks: PageBlock[]) => {
+    if (blocks.length === 0) return
+    setEditBlocks(current => {
+      const base = normalizePageBlocks(current)
+      const index = base.findIndex(block => block.id === blockId)
+      if (index === -1) return [...base, ...blocks]
+      const target = base[index]
+      const shouldReplaceEmptyParagraph = target.type === 'paragraph' && !target.text.trim()
+      if (shouldReplaceEmptyParagraph) {
+        return [...base.slice(0, index), ...blocks, ...base.slice(index + 1)]
+      }
+      return [...base.slice(0, index + 1), ...blocks, ...base.slice(index + 1)]
+    })
+  }
+
   const uploadPageAsset = async (file: File) => {
     const formData = new FormData()
     const extension = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1] || 'png'
@@ -214,7 +238,40 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     })
   }
 
+  const uploadDataImageBlock = async (block: PageBlock): Promise<PageBlock> => {
+    if (block.type !== 'image' || !block.url.startsWith('data:image/')) return block
+    const response = await fetch(block.url)
+    const blob = await response.blob()
+    const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type.split('/')[1] || 'png'
+    const file = new File([blob], block.caption || `pasted-image.${extension}`, { type: blob.type || 'image/png' })
+    const uploadedAsset = await uploadPageAsset(file)
+    return createImageBlock(uploadedAsset.url, block.caption || uploadedAsset.filename)
+  }
+
+  const normalizePastedHtmlBlocks = async (blocks: PageBlock[]) => Promise.all(blocks.map(uploadDataImageBlock))
+
   const handleEditorPaste = (blockId: string) => async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const html = event.clipboardData.getData('text/html')
+    if (html.trim()) {
+      const htmlBlocks = htmlToPageBlocks(html)
+      if (htmlBlocks.length > 0) {
+        event.preventDefault()
+        const hasImages = htmlBlocks.some(block => block.type === 'image')
+        if (hasImages) setImagePasteState('pasting')
+        try {
+          const normalizedBlocks = await normalizePastedHtmlBlocks(htmlBlocks)
+          insertBlocksAfter(blockId, normalizedBlocks)
+          setImagePasteState(hasImages ? 'ready' : 'idle')
+        } catch {
+          insertBlocksAfter(blockId, htmlBlocks.filter(block => block.type !== 'image' || !block.url.startsWith('data:image/')))
+          setImagePasteState('failed')
+        } finally {
+          window.setTimeout(() => setImagePasteState('idle'), 2200)
+        }
+        return
+      }
+    }
+
     const imageItem = Array.from(event.clipboardData.items).find(item => item.type.startsWith('image/'))
     if (!imageItem) return
 
@@ -711,7 +768,8 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                         {block.type === 'image' && (
                           <figure className="my-4 space-y-2">
                             <div className="relative h-[28rem] w-full overflow-hidden rounded-md bg-muted/20">
-                              <Image src={block.url} alt={block.caption || block.alt || 'Note image'} fill className="object-contain" unoptimized />
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={displayPageAssetUrl(block.url)} alt={block.caption || block.alt || 'Note image'} className="h-full w-full object-contain" />
                             </div>
                             <input
                               value={block.caption || ''}

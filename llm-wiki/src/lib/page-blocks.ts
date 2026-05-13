@@ -65,6 +65,11 @@ export function createImageBlock(url: string, caption = '', assetId?: string | n
   return { id: blockId(), type: 'image', url, caption, alt: caption, assetId }
 }
 
+export function displayPageAssetUrl(url: string) {
+  if (url.startsWith('/uploads/')) return url.replace('/uploads/', '/backend-uploads/')
+  return url
+}
+
 export function normalizePageBlocks(input?: unknown): PageBlock[] {
   if (!Array.isArray(input) || input.length === 0) return [createParagraphBlock('')]
   const blocks = input.flatMap<PageBlock>((raw) => {
@@ -192,6 +197,86 @@ export function markdownToPageBlocks(markdown?: string): PageBlock[] {
 
   flushAll()
   return blocks.length ? blocks : [createParagraphBlock('')]
+}
+
+function directText(element: Element) {
+  return Array.from(element.childNodes)
+    .filter(node => node.nodeType === Node.TEXT_NODE)
+    .map(node => node.textContent?.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+}
+
+function absoluteImageSrc(src: string) {
+  if (!src) return ''
+  try {
+    return new URL(src, window.location.href).toString()
+  } catch {
+    return src
+  }
+}
+
+export function htmlToPageBlocks(html: string): PageBlock[] {
+  if (typeof window === 'undefined' || !html.trim()) return []
+  const document = new DOMParser().parseFromString(html, 'text/html')
+  const blocks: PageBlock[] = []
+
+  const pushTextAndImages = (element: Element) => {
+    const text = element.textContent?.replace(/\s+/g, ' ').trim()
+    if (text) blocks.push(createParagraphBlock(text))
+    element.querySelectorAll('img').forEach(image => {
+      const src = absoluteImageSrc(image.getAttribute('src') || '')
+      if (!src) return
+      const caption = image.getAttribute('alt') || image.getAttribute('title') || ''
+      blocks.push(createImageBlock(src, caption))
+    })
+  }
+
+  const visit = (element: Element) => {
+    const tag = element.tagName.toLowerCase()
+    if (tag === 'script' || tag === 'style' || tag === 'noscript') return
+    if (/^h[1-6]$/.test(tag)) {
+      const text = element.textContent?.replace(/\s+/g, ' ').trim()
+      if (text) blocks.push(createHeadingBlock(text, Number(tag.slice(1))))
+      return
+    }
+    if (tag === 'p' || tag === 'article' || tag === 'section') {
+      pushTextAndImages(element)
+      return
+    }
+    if (tag === 'img') {
+      const src = absoluteImageSrc(element.getAttribute('src') || '')
+      if (src) blocks.push(createImageBlock(src, element.getAttribute('alt') || element.getAttribute('title') || ''))
+      return
+    }
+    if (tag === 'ul' || tag === 'ol') {
+      const items = Array.from(element.children)
+        .filter(child => child.tagName.toLowerCase() === 'li')
+        .map(child => child.textContent?.replace(/\s+/g, ' ').trim() || '')
+        .filter(Boolean)
+      if (items.length) blocks.push({ id: blockId(), type: 'bullet_list', items })
+      element.querySelectorAll('img').forEach(image => {
+        const src = absoluteImageSrc(image.getAttribute('src') || '')
+        if (src) blocks.push(createImageBlock(src, image.getAttribute('alt') || image.getAttribute('title') || ''))
+      })
+      return
+    }
+    if (tag === 'blockquote') {
+      const text = element.textContent?.replace(/\s+/g, ' ').trim()
+      if (text) blocks.push({ id: blockId(), type: 'quote', text })
+      return
+    }
+    if (tag === 'br') {
+      return
+    }
+    const text = directText(element)
+    if (text) blocks.push(createParagraphBlock(text))
+    Array.from(element.children).forEach(visit)
+  }
+
+  Array.from(document.body.children).forEach(visit)
+  return blocks
 }
 
 export function pageBlocksToMarkdown(blocks: PageBlock[]): string {

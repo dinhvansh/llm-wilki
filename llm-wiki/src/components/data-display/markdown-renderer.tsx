@@ -2,6 +2,7 @@
 import { Children, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { displayPageAssetUrl } from '@/lib/page-blocks'
 import { cn } from '@/lib/utils'
 import { Check, Copy, ExternalLink } from 'lucide-react'
 
@@ -21,11 +22,12 @@ function isRenderableImageUrl(value?: string | null) {
 function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'url'>('idle')
   if (!src) return null
+  const displaySrc = displayPageAssetUrl(src)
 
   const copyImage = async () => {
     try {
       if (typeof window !== 'undefined' && 'clipboard' in navigator && 'ClipboardItem' in window) {
-        const response = await fetch(src)
+        const response = await fetch(displaySrc)
         const blob = await response.blob()
         const clipboardItem = new window.ClipboardItem({
           [blob.type || 'image/png']: blob,
@@ -33,12 +35,12 @@ function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null 
         await navigator.clipboard.write([clipboardItem])
         setCopyState('copied')
       } else {
-        await navigator.clipboard.writeText(src)
+        await navigator.clipboard.writeText(displaySrc)
         setCopyState('url')
       }
     } catch {
       try {
-        await navigator.clipboard.writeText(src)
+        await navigator.clipboard.writeText(displaySrc)
         setCopyState('url')
       } catch {
         setCopyState('idle')
@@ -62,7 +64,7 @@ function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null 
             {copyState === 'copied' ? 'Copied image' : copyState === 'url' ? 'Copied URL' : 'Copy image'}
           </button>
           <a
-            href={src}
+            href={displaySrc}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 hover:bg-accent"
@@ -74,7 +76,7 @@ function RenderedImage({ src, alt }: { src?: string | null; alt?: string | null 
       </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={displaySrc}
         alt={alt ?? ''}
         className="w-full object-contain"
         loading="lazy"
