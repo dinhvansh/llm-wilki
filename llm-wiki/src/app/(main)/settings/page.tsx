@@ -5,6 +5,7 @@ import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
 import { useSettings, useTestSettingsConnection, useUpdateSettings } from '@/hooks/use-settings'
 import type { AIModelProfile, AITaskKey, RuntimeConnectionTestResult, RuntimeSettings } from '@/lib/types'
+import { ChevronDown, Clock3, SlidersHorizontal } from 'lucide-react'
 
 const PROVIDERS = ['none', 'ollama', 'openai', 'anthropic', 'openai_compatible']
 const DEFAULT_BASE_URL = 'http://host.docker.internal:11434'
@@ -129,6 +130,7 @@ export default function SettingsPage() {
   const testConnectionMutation = useTestSettingsConnection()
   const [form, setForm] = useState<Omit<RuntimeSettings, 'updatedAt'>>(EMPTY_FORM)
   const [taskTestResults, setTaskTestResults] = useState<Partial<Record<AITaskKey, RuntimeConnectionTestResult>>>({})
+  const [expandedTask, setExpandedTask] = useState<AITaskKey | null>(null)
 
   useEffect(() => {
     if (!data) return
@@ -237,48 +239,72 @@ export default function SettingsPage() {
               const profile = form.aiTaskProfiles[task.key]
               const result = taskTestResults[task.key]
               const isTesting = testConnectionMutation.isPending && testConnectionMutation.variables?.purpose === task.key
+              const isExpanded = expandedTask === task.key
               return (
-                <div key={task.key} className="rounded-lg border border-border p-4">
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">{task.title}</h3>
+                <div key={task.key} className="overflow-hidden rounded-xl border border-border bg-background">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedTask(current => current === task.key ? null : task.key)}
+                    className="flex w-full items-start justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-accent/40"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold">{task.title}</h3>
+                        <span className="rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{task.key}</span>
+                      </div>
                       <p className="mt-1 text-xs text-muted-foreground">{task.description}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
+                          <SlidersHorizontal className="h-3 w-3" />
+                          {profile.provider || 'none'}
+                        </span>
+                        <span className="rounded-full bg-muted px-2.5 py-1">{profile.model || 'No model selected'}</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
+                          <Clock3 className="h-3 w-3" />
+                          {Number(profile.timeoutSeconds)}s
+                        </span>
+                      </div>
                     </div>
-                    <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">{task.key}</span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <Field label="Provider">
-                      <SelectInput value={profile.provider} onChange={e => updateTaskProfile(task.key, 'provider', e.target.value)}>
-                        {PROVIDERS.map(provider => <option key={provider} value={provider}>{provider}</option>)}
-                      </SelectInput>
-                    </Field>
-                    <Field label="Model">
-                      <TextInput value={profile.model} onChange={e => updateTaskProfile(task.key, 'model', e.target.value)} placeholder={task.key === 'embeddings' ? 'nomic-embed-text' : 'gemma3:4b'} />
-                    </Field>
-                    <Field label="API Key">
-                      <TextInput value={profile.apiKey} onChange={e => updateTaskProfile(task.key, 'apiKey', e.target.value)} placeholder="optional" type="password" />
-                    </Field>
-                    <Field label="Base URL" hint="For Ollama in Docker use http://host.docker.internal:11434.">
-                      <TextInput value={profile.baseUrl} onChange={e => updateTaskProfile(task.key, 'baseUrl', e.target.value)} placeholder={task.defaultBaseUrl ?? ''} />
-                    </Field>
-                    <Field label="Timeout (seconds)">
-                      <TextInput value={profile.timeoutSeconds} onChange={e => updateTaskProfile(task.key, 'timeoutSeconds', Number(e.target.value))} type="number" min={5} max={600} />
-                    </Field>
-                    <div className="flex items-end">
-                      <button
-                        type="button"
-                        onClick={() => testConnection(task.key)}
-                        disabled={testConnectionMutation.isPending}
-                        className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
-                      >
-                        {isTesting ? 'Testing...' : 'Test Connection'}
-                      </button>
-                    </div>
-                  </div>
-                  {result && (
-                    <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${result.success ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
-                      {result.message}
-                      {typeof result.latencyMs === 'number' ? ` (${result.latencyMs} ms)` : ''}
+                    <ChevronDown className={`mt-1 h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-border px-4 py-4">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <Field label="Provider">
+                          <SelectInput value={profile.provider} onChange={e => updateTaskProfile(task.key, 'provider', e.target.value)}>
+                            {PROVIDERS.map(provider => <option key={provider} value={provider}>{provider}</option>)}
+                          </SelectInput>
+                        </Field>
+                        <Field label="Model">
+                          <TextInput value={profile.model} onChange={e => updateTaskProfile(task.key, 'model', e.target.value)} placeholder={task.key === 'embeddings' ? 'nomic-embed-text' : 'gemma3:4b'} />
+                        </Field>
+                        <Field label="API Key">
+                          <TextInput value={profile.apiKey} onChange={e => updateTaskProfile(task.key, 'apiKey', e.target.value)} placeholder="optional" type="password" />
+                        </Field>
+                        <Field label="Base URL" hint="For Ollama in Docker use http://host.docker.internal:11434.">
+                          <TextInput value={profile.baseUrl} onChange={e => updateTaskProfile(task.key, 'baseUrl', e.target.value)} placeholder={task.defaultBaseUrl ?? ''} />
+                        </Field>
+                        <Field label="Timeout (seconds)">
+                          <TextInput value={profile.timeoutSeconds} onChange={e => updateTaskProfile(task.key, 'timeoutSeconds', Number(e.target.value))} type="number" min={5} max={600} />
+                        </Field>
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            onClick={() => testConnection(task.key)}
+                            disabled={testConnectionMutation.isPending}
+                            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                          >
+                            {isTesting ? 'Testing...' : 'Test Connection'}
+                          </button>
+                        </div>
+                      </div>
+                      {result && (
+                        <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${result.success ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                          {result.message}
+                          {typeof result.latencyMs === 'number' ? ` (${result.latencyMs} ms)` : ''}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
