@@ -1,9 +1,13 @@
+import re
+from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.ingest import ensure_upload_dir
 from app.db.database import get_db
 from app.core.identity import require_authenticated_actor, require_permission, require_roles
 from app.schemas.source import PageOut, PaginatedResponse
@@ -30,6 +34,13 @@ from app.services.pages import (
 )
 
 router = APIRouter()
+SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+ALLOWED_PAGE_ASSET_MIME_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 class ComposePayload(BaseModel):
@@ -59,6 +70,13 @@ class PageFromChunksPayload(BaseModel):
     title: str
     chunkIds: list[str]
     existingPageId: str | None = None
+
+
+def _safe_page_asset_name(filename: str | None, content_type: str) -> str:
+    extension = Path(filename or "").suffix.lower() or ALLOWED_PAGE_ASSET_MIME_TYPES.get(content_type, ".png")
+    stem = Path(filename or "clipboard-image").stem
+    normalized_stem = SAFE_FILENAME_RE.sub("-", stem).strip("-._") or "clipboard-image"
+    return f"{normalized_stem}{extension}"
 
 
 @router.get("", response_model=PaginatedResponse[PageOut])
@@ -170,6 +188,32 @@ async def create_page_from_chunks_route(payload: PageFromChunksPayload, db: Sess
     if not page:
         raise HTTPException(status_code=404, detail="Source chunks or target page not found")
     return page
+
+
+@router.post("/assets")
+async def upload_page_asset(file: UploadFile = File(...), actor: Actor = Depends(require_permission("page:write"))):
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_PAGE_ASSET_MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported page asset type")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    assets_dir = ensure_upload_dir() / "page-assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    original_name = _safe_page_asset_name(file.filename, content_type)
+    stored_name = f"{uuid4().hex[:12]}-{original_name}"
+    target = assets_dir / stored_name
+    target.write_bytes(file_bytes)
+
+    return {
+        "filename": original_name,
+        "contentType": content_type,
+        "url": f"/uploads/page-assets/{stored_name}",
+        "size": len(file_bytes),
+    }
 
 
 @router.post("/bulk")

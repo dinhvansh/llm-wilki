@@ -12,6 +12,7 @@ import { usePage, usePublishPage, useUnpublishPage, useUpdatePage, usePages } fr
 import { useAssignPageCollection, useCollections } from '@/hooks/use-collections'
 import { useAssessDiagramPage, useDiagrams, useGenerateDiagramFromPage } from '@/hooks/use-diagrams'
 import { useAuth } from '@/providers/auth-provider'
+import { apiRequest } from '@/services/api-client'
 import {
   BookOpen, ChevronLeft, ChevronRight,
   Edit3, AlertTriangle, RefreshCw,
@@ -44,6 +45,19 @@ const WORKSPACE_INSERTS = [
   { label: 'Action items', content: '\n## Action items\n\n- [ ] \n' },
   { label: 'Source notes', content: '\n## Source notes\n\n- Source:\n- Why it matters:\n' },
 ]
+
+type UploadedPageAsset = {
+  url: string
+  filename: string
+  contentType: string
+  size: number
+}
+
+function withEditorSpacing(currentContent: string, cursorPosition: number, insertedContent: string) {
+  const needsLeadingBreak = cursorPosition > 0 && !currentContent.slice(0, cursorPosition).endsWith('\n')
+  const needsTrailingBreak = !insertedContent.endsWith('\n')
+  return `${needsLeadingBreak ? '\n' : ''}${insertedContent}${needsTrailingBreak ? '\n' : ''}`
+}
 
 export default function PageDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
@@ -173,14 +187,21 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
     setImagePasteState('pasting')
 
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result || ''))
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
+      const formData = new FormData()
+      const extension = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1] || 'png'
+      const safeName = file.name?.trim() || `clipboard-${Date.now()}.${extension}`
+      formData.append('file', file, safeName)
+
+      const uploadedAsset = await apiRequest<UploadedPageAsset>('/pages/assets', {
+        method: 'POST',
+        body: formData,
       })
-      const safeName = file.name?.trim() || `clipboard-${Date.now()}.png`
-      insertIntoEditor(`\n![${safeName}](${dataUrl})\n`)
+
+      const plainText = event.clipboardData.getData('text/plain').trim()
+      const imageMarkdown = `![${uploadedAsset.filename}](${uploadedAsset.url})`
+      const fragments = [plainText, imageMarkdown].filter(Boolean)
+      const content = withEditorSpacing(editContent, editorRef.current?.selectionStart ?? editContent.length, fragments.join('\n\n'))
+      insertIntoEditor(content)
       setImagePasteState('ready')
     } catch {
       setImagePasteState('failed')
@@ -458,10 +479,10 @@ export default function PageDetailPage({ params }: { params: Promise<{ slug: str
                   />
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <ImagePlus className="h-3.5 w-3.5 text-primary" />
-                    {imagePasteState === 'pasting' && <span>Processing clipboard image...</span>}
-                    {imagePasteState === 'ready' && <span>Image inserted into the draft.</span>}
-                    {imagePasteState === 'failed' && <span>Could not read the clipboard image.</span>}
-                    {imagePasteState === 'idle' && <span>Paste an image from outside with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
+                    {imagePasteState === 'pasting' && <span>Uploading clipboard image...</span>}
+                    {imagePasteState === 'ready' && <span>Clipboard text and image were inserted into the draft.</span>}
+                    {imagePasteState === 'failed' && <span>Could not upload the clipboard image.</span>}
+                    {imagePasteState === 'idle' && <span>Paste text, screenshots, or both with <span className="font-medium text-foreground">Ctrl/Cmd + V</span>.</span>}
                   </div>
                 </div>
 
