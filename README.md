@@ -1,112 +1,114 @@
 # AI-native Wiki Platform
 
-`llm-wiki` is an internal knowledge workspace that turns scattered documents into a grounded wiki with citations, review flows, scoped access control, and evidence-aware Ask AI.
+Internal knowledge workspace with grounded Ask AI, citations, review workflows, scoped permissions, and diagram support.
 
-The current build is not a CRUD dashboard. It is a connected workflow:
+## 1) What You Get
 
-- `Sources -> ingest -> chunks / claims / artifacts`
-- `Ask AI -> citation -> source -> page -> graph`
-- `Notes / review / draft pages -> publish`
+- Source ingest: file, URL, text, transcript
+- Background jobs: queue, retry, progress, cancel
+- Ask AI: grounded answers, citations, evidence diagnostics
+- Review + governance: lint, review queue, notes/anchors
+- Pages + graph + timeline + glossary + entity explorer
+- Embedded OpenFlowKit for process/diagram workflows
 
-## What is in this repo
+## 2) Architecture
 
-Core product capabilities already implemented:
+- `llm-wiki/` - Next.js frontend
+- `backend/` - FastAPI API + worker
+- `postgres` - database (pgvector)
+- `redis` - queue coordination
+- `minio` - object storage
+- `openflowkit` - embedded diagram app
 
-- source ingest from `file`, `URL`, `text`, and `transcript`
-- durable background jobs with worker, retry, cancel, logs, and progress
-- collection-scoped authorization with roles, memberships, and permission engine
-- grounded Ask AI with citations, related pages, related sources, diagnostics, and feedback logging
-- multimodal evidence flow for OCR, notebook context, structure, table, and image-derived artifacts
-- first-class notes with anchors to citations, chunks, artifacts, pages, and review items
-- pages with backlinks, evidence panels, revision history, and audit trail
-- review queue with approve / reject / merge / comments
-- graph, lint, diagrams, admin operations, skills, and release smoke scripts
+## 3) Prerequisites (Cross-Platform)
 
-## Current runtime behavior
+### Recommended (works on most machines)
 
-Ask AI supports two modes:
+- Docker Desktop (or Docker Engine + Compose plugin)
+  - Verify: `docker --version` and `docker compose version`
 
-- `provider-backed`: Ollama / OpenAI / compatible provider is configured for answer generation and embeddings
-- `grounded fallback`: if no provider is configured, the system still answers from retrieval + rerank + formatting logic with citations
+### Optional for local non-Docker development
 
-If you run Ollama locally, recommended setup is:
+- Python 3.11+
+- Node.js 20+
+- npm 10+
 
-- answer tasks: `provider=ollama`, model such as `gemma3:4b`
-- embeddings: `provider=ollama`, model `nomic-embed-text`
-- Docker base URL: `http://host.docker.internal:11434`
+## 4) Quick Start (Docker-first)
 
-## RAG answer policy (2026-05)
+This is the default path for Windows/macOS/Linux.
 
-Ask AI now enforces grounded answer policy with explicit response modes:
+1. Clone repo and open project root.
+2. Create backend env:
 
-- `answer`: evidence is sufficient
-- `partial_answer`: evidence is incomplete, answer is limited
-- `no_answer`: knowledge base does not contain enough support
-- `general_fallback`: optional non-official fallback, disabled by default
+```bash
+cp backend/.env.example backend/.env
+```
 
-Runtime settings include Ask policy knobs in `/settings`:
-
-- `minimumTopScore`
-- `minimumTermCoverage`
-- `allowPartialAnswers`
-- `allowGeneralFallback` (dangerous, default `false`)
-- `crossLingualRewriteEnabled` (default `true`)
-
-Responses include evidence diagnostics:
-
-- `answerMode`, `evidenceStatus`, `answerLanguage`, `sourceLanguages`
-- `evidenceGate` and `diagnostics.answerVerification`
-
-## Stack
-
-- `llm-wiki/`: Next.js 15 frontend
-- `backend/`: FastAPI API, Alembic migrations, worker services
-- `postgres`: PostgreSQL + pgvector
-- `redis`: queue / worker coordination
-- `minio`: S3-compatible object storage for source and artifact storage
-- `openflowkit`: self-hosted diagram editor embedded by the wiki frontend
-
-## Runtime services
-
-The default Docker stack exposes:
-
-- frontend: `http://localhost:3100`
-- OpenFlowKit editor runtime: `http://localhost:3045`
-- backend API: `http://localhost:18000`
-- Swagger: `http://localhost:18000/docs`
-- Postgres: `localhost:55432`
-- Redis: `localhost:56379`
-- MinIO API: `http://localhost:19000`
-- MinIO console: `http://localhost:19001`
-
-## Quick start with Docker
-
-1. Create backend env:
+PowerShell:
 
 ```powershell
 Copy-Item backend\.env.example backend\.env
 ```
 
-2. Start the full stack:
+3. Start stack:
 
-```powershell
+```bash
 docker compose up -d --build
 ```
 
-3. Open the app and supporting services from the URLs above.
+4. Verify stack health:
 
-Default dev account:
+Windows PowerShell:
 
-- email: `admin@local.test`
-- password: `admin123`
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\docker_smoke.ps1
+```
 
-## Local development
+5. Open:
+
+- App: `http://localhost:3100`
+- Backend docs: `http://localhost:18000/docs`
+- OpenFlowKit: `http://localhost:3045`
+- MinIO console: `http://localhost:19001`
+
+Default account:
+
+- Email: `admin@local.test`
+- Password: `admin123`
+
+## 5) Service Ports
+
+- Frontend: `3100`
+- Backend API: `18000`
+- OpenFlowKit: `3045`
+- Postgres: `55432`
+- Redis: `56379`
+- MinIO API: `19000`
+- MinIO Console: `19001`
+
+## 6) Local Dev (without Docker)
+
+Use this only when you need direct debugging by service.
 
 ### Backend
 
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+alembic upgrade head
+python -m app.main
+```
+
+PowerShell:
+
 ```powershell
 cd backend
-pip install -r requirements.txt
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 alembic upgrade head
 python -m app.main
@@ -114,12 +116,21 @@ python -m app.main
 
 ### Worker
 
-```powershell
+```bash
 cd backend
 python -m app.worker
 ```
 
 ### Frontend
+
+```bash
+cd llm-wiki
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+PowerShell:
 
 ```powershell
 cd llm-wiki
@@ -128,79 +139,66 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-### OpenFlowKit
+## 7) Ask AI Runtime Modes
 
-```powershell
-cd openflowkit
-npm install
-npm run dev
-```
+- Provider-backed: uses configured LLM/embedding providers
+- Grounded fallback: deterministic grounded formatting when provider path is unavailable
 
-## Verification commands
+### RAG Answer Policy
 
-Build frontend:
+Ask responses expose:
 
-```powershell
+- `answerMode`: `answer | partial_answer | no_answer | general_fallback`
+- `evidenceStatus`: `supported | partial | insufficient | unsupported`
+- `answerLanguage` + `sourceLanguages`
+- `evidenceGate` + verifier diagnostics
+
+Runtime knobs in `/settings`:
+
+- `minimumTopScore`
+- `minimumTermCoverage`
+- `allowPartialAnswers`
+- `allowGeneralFallback` (default `false`)
+- `crossLingualRewriteEnabled` (default `true`)
+
+## 8) Validation Commands
+
+### Build checks
+
+```bash
+python -m compileall backend/app
 npm --prefix llm-wiki run build
 ```
 
-Run Ask quality eval:
+### E2E (frontend)
 
-```powershell
-python backend\scripts\evaluate_quality.py
+```bash
+npm --prefix llm-wiki run test:e2e
 ```
 
-Run retrieval benchmark:
-
-```powershell
-python backend\scripts\benchmark_retrieval.py
-```
-
-Run Docker smoke:
+### Smoke (docker stack)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\docker_smoke.ps1 -SkipBuild
+powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 ```
 
-Run backup / restore smoke:
+## 9) Troubleshooting
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\backup_restore_smoke.ps1
-```
+- Port conflict:
+  - Stop old containers/apps using `3100/18000/3045/...`
+- Backend 500 after config change:
+  - `docker compose logs backend --tail=200`
+- Rebuild clean:
+  - `docker compose down`
+  - `docker compose up -d --build`
+- Full reset:
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\clean_seed_reset.ps1 -Apply`
 
-Run full clean reset from empty volumes:
+## 10) Repo Map
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\clean_seed_reset.ps1 -Apply
-```
-
-Run broader regression:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_regression.ps1
-```
-
-## Repository map
-
-- [backend/README.md](backend/README.md)
-- [docs/upgrade-roadmap-2026.md](docs/upgrade-roadmap-2026.md)
-- [docs/ai-knowledge-workspace-gap-plan-2026.md](docs/ai-knowledge-workspace-gap-plan-2026.md)
-- [docs/QUALITY_RELEASE_CHECKLIST.md](docs/QUALITY_RELEASE_CHECKLIST.md)
-- [docs/PRODUCTION_RELEASE_CHECKLIST.md](docs/PRODUCTION_RELEASE_CHECKLIST.md)
-- [docs/ASK_AI_DOCUMENT_QA_TEST_CASES.md](docs/ASK_AI_DOCUMENT_QA_TEST_CASES.md)
-
-## Release status
-
-This repo has already been verified on local Docker for:
-
-- clean stack reset from empty volumes
-- Postgres + MinIO backup smoke
-- OpenFlowKit-backed full-stack startup smoke
-- grounded Ask AI quality gates
-- retrieval benchmark gates
-- scoped permissions and admin flows
-
-Residual work should be tracked in:
-
-- [docs/upgrade-roadmap-2026.md](docs/upgrade-roadmap-2026.md)
-- [docs/ai-knowledge-workspace-gap-plan-2026.md](docs/ai-knowledge-workspace-gap-plan-2026.md)
+- Backend guide: [backend/README.md](backend/README.md)
+- Frontend guide: [llm-wiki/README.md](llm-wiki/README.md)
+- Upgrade roadmap: [docs/upgrade-roadmap-2026.md](docs/upgrade-roadmap-2026.md)
+- Quality checklist: [docs/QUALITY_RELEASE_CHECKLIST.md](docs/QUALITY_RELEASE_CHECKLIST.md)
+- Production checklist: [docs/PRODUCTION_RELEASE_CHECKLIST.md](docs/PRODUCTION_RELEASE_CHECKLIST.md)
