@@ -9,7 +9,7 @@ if (-not $SkipBuild) {
   $composeArgs += "--build"
 }
 $composeArgs += "--force-recreate"
-$composeArgs += @("postgres", "redis", "minio", "drawio", "backend", "worker", "frontend")
+$composeArgs += @("postgres", "redis", "minio", "openflowkit-signaling", "openflowkit", "backend", "worker", "frontend")
 
 docker @composeArgs
 
@@ -32,7 +32,7 @@ function Wait-HttpOk($Url, $Name) {
 Wait-HttpOk "http://localhost:18000/health" "Backend health"
 Wait-HttpOk "http://localhost:18000/ready" "Backend readiness"
 Wait-HttpOk "http://localhost:3100" "Frontend"
-Wait-HttpOk "http://localhost:18081" "draw.io"
+Wait-HttpOk "http://localhost:3045" "OpenFlowKit"
 Wait-HttpOk "http://localhost:19000/minio/health/live" "MinIO"
 
 $login = Invoke-RestMethod -Uri "http://localhost:18000/api/auth/login" -Method Post -ContentType "application/json" -Body '{"email":"admin@local.test","password":"admin123"}'
@@ -55,4 +55,4 @@ if (-not $settings) {
   throw "Expected authenticated settings response"
 }
 
-Write-Host "Docker smoke PASS. Collections=$($collections.Count), Jobs=$($jobs.Count), Auth=$($me.role), MinIO=ok"
+Write-Host "Docker smoke PASS. Collections=$($collections.Count), Jobs=$($jobs.Count), Auth=$($me.role), OpenFlowKit=ok, MinIO=ok"

@@ -1,26 +1,29 @@
-# Backend - LLM Wiki API
+# Backend - AI-native Wiki API
 
-Tài liệu này dành cho dev/backend operator. Nếu mục tiêu là học cách dùng sản phẩm, đọc trước:
+This guide is for backend development and local operations.
 
-- [Hướng Dẫn Sử Dụng](../docs/HUONG_DAN_SU_DUNG.md)
-- [Flow Nghiệp Vụ](../docs/FLOW_NGHIEP_VU.md)
-- [Flow Xử Lý Hệ Thống](../docs/FLOW_XU_LY_HE_THONG.md)
+If you want product usage or workflow context first, read:
 
-## Vai trò của backend
+- [User Guide](../docs/HUONG_DAN_SU_DUNG.md)
+- [Business Flow](../docs/FLOW_NGHIEP_VU.md)
+- [System Flow](../docs/FLOW_XU_LY_HE_THONG.md)
 
-Backend chịu trách nhiệm cho:
+## Responsibilities
+
+The backend owns:
 
 - source ingest
-- worker jobs
-- page generation/update/versioning
-- review workflow
-- ask/search/graph/lint
-- auth/session/roles
-- admin operations
+- worker jobs and job status
+- retrieval, Ask AI, and search
+- page generation, versioning, and review
+- notes, citations, and evidence workflows
+- auth, roles, permissions, and collection scope
+- admin and runtime settings
+- durable storage metadata and file download flows
 
-## Setup
+## Local setup
 
-Recommended local setup from repo root:
+Recommended from repo root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_backend.ps1
@@ -29,6 +32,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_backend.ps1
 Manual setup:
 
 ```powershell
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -37,80 +41,96 @@ alembic upgrade head
 python -m app.main
 ```
 
-OCR note for native Windows:
-
-- local OCR for `pdf scan` and `image_ocr` requires `Tesseract` plus `Docling`
-- the repo prefers `backend\.local\tessdata` for local OCR language files
-- verify with:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\test_phase28.py
-```
-
 ## Worker
 
 ```powershell
+cd backend
 python -m app.worker
 ```
 
-Smoke một job:
+Run a single-pass worker locally:
 
 ```powershell
 python -m app.worker --once
 ```
 
-## Environment chính
+## OCR note for Windows
 
-| Variable | Mô tả |
+Local OCR for scanned PDFs and image sources requires:
+
+- `Tesseract`
+- `Docling`
+
+The repo prefers `backend\.local\tessdata` for local language files.
+
+Quick verification:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\test_phase28.py
+```
+
+## Main environment variables
+
+| Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Kết nối PostgreSQL hoặc SQLite test |
-| `REDIS_URL` | Redis cho worker notifications |
-| `JOB_QUEUE_BACKEND` | `redis` hoặc `database` |
-| `UPLOAD_DIR` | nơi lưu uploads local |
-| `STORAGE_BACKEND` | hiện dùng `local`, reserved cho `s3` |
-| `SECRET_KEY` | bắt buộc đổi trước production |
+| `DATABASE_URL` | PostgreSQL or SQLite connection string |
+| `REDIS_URL` | Redis for queue and notifications |
+| `JOB_QUEUE_BACKEND` | `redis` or `database` |
+| `UPLOAD_DIR` | local upload cache / file path |
+| `STORAGE_BACKEND` | `local` or `s3` |
+| `S3_ENDPOINT_URL` | MinIO/S3 endpoint |
+| `S3_BUCKET` | object storage bucket |
+| `SECRET_KEY` | app secret; change before shared/prod use |
 
-## Endpoint chính
+## Main endpoints
 
 - `/api/auth/*`
 - `/api/sources/*`
 - `/api/pages/*`
 - `/api/review-items/*`
+- `/api/notes/*`
 - `/api/ask*`
 - `/api/search`
+- `/api/diagrams/*`
 - `/api/lint*`
 - `/api/admin/*`
 - `/health`
 - `/ready`
 
-Docs API:
+API docs:
 
-- Swagger: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger: `http://localhost:18000/docs`
+- ReDoc: `http://localhost:18000/redoc`
 
-## Auth dev mặc định
+## Default local auth
 
-- Email: `admin@local.test`
-- Password: `admin123`
+- email: `admin@local.test`
+- password: `admin123`
 
-## Test
+## Useful commands
+
+Compile backend code:
 
 ```powershell
-python scripts\test_phase19.py
-python scripts\test_phase20.py
-python scripts\test_phase21.py
 python -m compileall app migrations scripts
 ```
 
-Regression đầy đủ từ root:
+Run targeted quality checks:
+
+```powershell
+python scripts\benchmark_retrieval.py
+python scripts\evaluate_quality.py
+```
+
+Run broader regression from repo root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_regression.ps1
 ```
 
-## Tài liệu liên quan
+## Related docs
 
-- [Flow Xử Lý Hệ Thống](../docs/FLOW_XU_LY_HE_THONG.md)
+- [System Flow](../docs/FLOW_XU_LY_HE_THONG.md)
 - [Security Checklist](../SECURITY_CHECKLIST.md)
 - [Performance Baseline](../PERFORMANCE_BASELINE.md)
 - [Release Notes](../RELEASE_NOTES.md)

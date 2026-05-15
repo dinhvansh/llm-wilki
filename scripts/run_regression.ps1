@@ -74,7 +74,7 @@ try {
   npm --prefix llm-wiki run build
 
   if (-not $SkipDocker) {
-    docker compose up -d --build --force-recreate postgres redis backend worker frontend drawio
+    docker compose up -d --build --force-recreate postgres redis minio openflowkit-signaling openflowkit backend worker frontend
     powershell -ExecutionPolicy Bypass -File .\scripts\docker_smoke.ps1 -SkipBuild
   }
 

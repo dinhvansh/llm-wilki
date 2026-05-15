@@ -42,7 +42,20 @@ If you run Ollama locally, recommended setup is:
 - `postgres`: PostgreSQL + pgvector
 - `redis`: queue / worker coordination
 - `minio`: S3-compatible object storage for source and artifact storage
-- `drawio`: self-hosted diagram editor
+- `openflowkit`: self-hosted diagram editor embedded by the wiki frontend
+
+## Runtime services
+
+The default Docker stack exposes:
+
+- frontend: `http://localhost:3100`
+- OpenFlowKit editor runtime: `http://localhost:3045`
+- backend API: `http://localhost:18000`
+- Swagger: `http://localhost:18000/docs`
+- Postgres: `localhost:55432`
+- Redis: `localhost:56379`
+- MinIO API: `http://localhost:19000`
+- MinIO console: `http://localhost:19001`
 
 ## Quick start with Docker
 
@@ -58,13 +71,7 @@ Copy-Item backend\.env.example backend\.env
 docker compose up -d --build
 ```
 
-3. Open the app:
-
-- frontend: `http://localhost:3100`
-- backend API: `http://localhost:18000`
-- Swagger: `http://localhost:18000/docs`
-- draw.io: `http://localhost:18081`
-- MinIO console: `http://localhost:19001`
+3. Open the app and supporting services from the URLs above.
 
 Default dev account:
 
@@ -96,6 +103,14 @@ python -m app.worker
 cd llm-wiki
 npm install
 Copy-Item .env.example .env.local
+npm run dev
+```
+
+### OpenFlowKit
+
+```powershell
+cd openflowkit
+npm install
 npm run dev
 ```
 
@@ -158,6 +173,7 @@ This repo has already been verified on local Docker for:
 
 - clean stack reset from empty volumes
 - Postgres + MinIO backup smoke
+- OpenFlowKit-backed full-stack startup smoke
 - grounded Ask AI quality gates
 - retrieval benchmark gates
 - scoped permissions and admin flows

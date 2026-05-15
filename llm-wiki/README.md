@@ -1,44 +1,55 @@
-# Frontend - LLM Wiki
+# Frontend - AI-native Wiki
 
-Tài liệu này dành cho dev/frontend operator. Nếu mục tiêu là học cách dùng sản phẩm, đọc trước:
+This guide is for frontend development and local runtime setup.
 
-- [Hướng Dẫn Sử Dụng](../docs/HUONG_DAN_SU_DUNG.md)
-- [Flow Nghiệp Vụ](../docs/FLOW_NGHIEP_VU.md)
+If you want product usage or workflow context first, read:
 
-## Vai trò của frontend
+- [User Guide](../docs/HUONG_DAN_SU_DUNG.md)
+- [Business Flow](../docs/FLOW_NGHIEP_VU.md)
 
-Frontend cung cấp các màn hình chính:
+## Responsibilities
+
+The frontend provides the main workspace surfaces:
 
 - dashboard
+- collections
 - sources
 - pages
-- review
-- ask
+- Ask AI
 - graph
+- review
 - lint
 - settings
 - admin operations
+- diagram flows through embedded OpenFlowKit
 
-## Setup
+## Local setup
 
 ```powershell
+cd llm-wiki
 npm install
 Copy-Item .env.example .env.local
 npm run dev
 ```
 
-## Environment
+## Main environment variables
 
-| Variable | Mô tả |
+| Variable | Purpose |
 |---|---|
-| `NEXT_PUBLIC_USE_REAL_API` | bật dùng FastAPI backend |
-| `NEXT_PUBLIC_API_BASE_URL` | base URL của API |
+| `NEXT_PUBLIC_USE_REAL_API` | enable FastAPI backend instead of mock services |
+| `NEXT_PUBLIC_API_BASE_URL` | browser API base URL |
+| `NEXT_PUBLIC_OPENFLOWKIT_URL` | iframe URL for the OpenFlowKit editor |
+| `OPENFLOWKIT_PROXY_TARGET` | server-side proxy target for `/openflowkit` |
+| `API_PROXY_TARGET` | server-side proxy target for `/backend-api` |
 
-Ví dụ:
+Example:
 
 ```env
 NEXT_PUBLIC_USE_REAL_API=true
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_BASE_URL=/backend-api
+NEXT_PUBLIC_OPENFLOWKIT_URL=/openflowkit/#/home
+API_PROXY_TARGET=http://localhost:18000/api
+OPENFLOWKIT_PROXY_TARGET=http://localhost:3045
 ```
 
 ## Commands
@@ -52,16 +63,21 @@ npm run test:e2e
 ## Main routes
 
 - `/`
+- `/login`
+- `/collections`
 - `/sources`
 - `/pages`
-- `/review`
 - `/ask`
 - `/graph`
+- `/review`
 - `/lint`
 - `/settings`
-- `/admin`
+- `/skills`
+- `/diagrams`
+- `/diagram-flow/[slug]`
+- `/admin/*`
 
-## Tài liệu liên quan
+## Related docs
 
-- [Flow Nghiệp Vụ](../docs/FLOW_NGHIEP_VU.md)
+- [Business Flow](../docs/FLOW_NGHIEP_VU.md)
 - [Release Notes](../RELEASE_NOTES.md)

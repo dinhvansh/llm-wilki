@@ -15,7 +15,7 @@ try {
 
   docker compose down -v
   if ($LASTEXITCODE -ne 0) { throw "docker compose down -v failed" }
-  docker compose up -d --build postgres redis minio drawio backend worker frontend
+  docker compose up -d --build postgres redis minio openflowkit-signaling openflowkit backend worker frontend
   if ($LASTEXITCODE -ne 0) { throw "docker compose up failed" }
   powershell -ExecutionPolicy Bypass -File .\scripts\docker_smoke.ps1 -SkipBuild
   Write-Host "Clean seed reset PASS"

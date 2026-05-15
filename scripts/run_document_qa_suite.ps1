@@ -161,7 +161,7 @@ try {
   }
 
   if (-not $SkipDocker) {
-    Add-Step "docker_rebuild" { docker compose up -d --build --force-recreate postgres redis drawio backend worker frontend; if ($LASTEXITCODE -ne 0) { throw "Docker rebuild failed with exit code ${LASTEXITCODE}" } } "docker"
+    Add-Step "docker_rebuild" { docker compose up -d --build --force-recreate postgres redis minio openflowkit-signaling openflowkit backend worker frontend; if ($LASTEXITCODE -ne 0) { throw "Docker rebuild failed with exit code ${LASTEXITCODE}" } } "docker"
     Add-Step "docker_smoke" { Invoke-Checked "powershell" @("-ExecutionPolicy", "Bypass", "-File", ".\scripts\docker_smoke.ps1", "-SkipBuild") } "docker"
   }
 
