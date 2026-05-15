@@ -1,5 +1,7 @@
 # AI-native Wiki Platform
 
+![AI-native Wiki Platform Overview](docs/assets/a5227a55-1783-4777-8d11-205450942bc5.png)
+
 Internal knowledge workspace with grounded Ask AI, citations, review workflows, scoped permissions, and diagram support.
 
 ## 1) What You Get
