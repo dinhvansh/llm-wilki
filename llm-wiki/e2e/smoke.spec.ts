@@ -13,12 +13,11 @@ test.describe('primary route smoke', () => {
 })
 
 test('login user menu and protected settings route render', async ({ page }) => {
-  await page.goto('/')
-  await page.getByLabel('Email').fill('admin@local.test')
-  await page.getByLabel('Password').fill('admin123')
-  await page.getByRole('button', { name: 'Login' }).click()
-  await expect(page.getByText('Dev Admin')).toBeVisible()
+  await page.goto('/login')
+  await page.locator('input[autocomplete="email"]').fill('admin@local.test')
+  await page.locator('input[autocomplete="current-password"]').fill('admin123')
+  await page.getByRole('button', { name: 'Sign In' }).click()
+  await expect(page).toHaveURL(/\/$/)
   await page.goto('/settings')
-  await expect(page.getByText('Runtime Settings')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
 })
-

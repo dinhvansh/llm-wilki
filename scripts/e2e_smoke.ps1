@@ -57,31 +57,31 @@ if ($job.status -ne "completed") {
   throw "Expected text ingest job to complete, got $($job.status)"
 }
 
-$source = Invoke-Json "$ApiBase/sources/$($textSource.id)" "GET"
+$source = Invoke-Json "$ApiBase/sources/$($textSource.id)" "GET" $null $headers
 if ($source.parseStatus -ne "indexed") {
   throw "Expected indexed source after worker processing"
 }
 
-$affectedPages = Invoke-Json "$ApiBase/sources/$($source.id)/affected-pages" "GET"
+$affectedPages = Invoke-Json "$ApiBase/sources/$($source.id)/affected-pages" "GET" $null $headers
 if ($affectedPages.Count -lt 1) {
   throw "Expected generated page for E2E source"
 }
 $page = $affectedPages[0]
 $published = Invoke-Json "$ApiBase/pages/$($page.id)/publish" "POST" $null $headers
 $unpublished = Invoke-Json "$ApiBase/pages/$($page.id)/unpublish" "POST" $null $headers
-$audit = Invoke-Json "$ApiBase/pages/$($page.id)/audit" "GET"
+$audit = Invoke-Json "$ApiBase/pages/$($page.id)/audit" "GET" $null $headers
 if ($audit.Count -lt 2) {
   throw "Expected publish/unpublish audit history"
 }
 
-$ask = Invoke-Json "$ApiBase/ask" "POST" @{ question = "What does Phase 18 validate?" }
+$ask = Invoke-Json "$ApiBase/ask" "POST" @{ question = "What does Phase 18 validate?" } $headers
 if ($ask.citations.Count -lt 1) {
   throw "Expected Ask AI citations"
 }
 
-$review = Invoke-Json "$ApiBase/review-items?pageSize=5" "GET"
+$review = Invoke-Json "$ApiBase/review-items?pageSize=5" "GET" $null $headers
 $graph = Invoke-Json "$ApiBase/graph?limit=25" "GET"
-$lint = Invoke-Json "$ApiBase/lint?pageSize=5" "GET"
+$lint = Invoke-Json "$ApiBase/lint?pageSize=5" "GET" $null $headers
 if ($graph.nodes.Count -lt 1 -or $lint.summary.issueCount -lt 0) {
   throw "Expected graph and lint responses"
 }
