@@ -199,9 +199,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 
 - Backend guide: [backend/README.md](backend/README.md)
 - Frontend guide: [llm-wiki/README.md](llm-wiki/README.md)
+- Architecture overview diagrams: [docs/PROJECT_ARCHITECTURE_OVERVIEW.md](docs/PROJECT_ARCHITECTURE_OVERVIEW.md)
 - Upgrade roadmap: [docs/upgrade-roadmap-2026.md](docs/upgrade-roadmap-2026.md)
 - Quality checklist: [docs/QUALITY_RELEASE_CHECKLIST.md](docs/QUALITY_RELEASE_CHECKLIST.md)
 - Production checklist: [docs/PRODUCTION_RELEASE_CHECKLIST.md](docs/PRODUCTION_RELEASE_CHECKLIST.md)
+
+## Architecture Snapshot
+
+![AI-native Wiki Platform Architecture](docs/images/architecture-overview.png)
 
 ## 11) Future Roadmap
 
