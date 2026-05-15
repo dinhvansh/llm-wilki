@@ -21,6 +21,14 @@ AI_TASK_KEYS = (
     "review_assist",
     "embeddings",
 )
+ASK_POLICY_KEY = "__ask_policy__"
+DEFAULT_ASK_POLICY = {
+    "minimumTopScore": 0.45,
+    "minimumTermCoverage": 0.35,
+    "allowPartialAnswers": True,
+    "allowGeneralFallback": False,
+    "crossLingualRewriteEnabled": True,
+}
 
 
 @dataclass
@@ -132,6 +140,7 @@ class RuntimeConfigSnapshot:
     graph_node_limit: int
     lint_page_limit: int
     auto_review_threshold: float
+    ask_policy: dict
 
     def profile_for_task(self, task_name: str) -> LLMProfile:
         if task_name in self.ai_task_profiles:
@@ -174,6 +183,7 @@ def _default_snapshot() -> RuntimeConfigSnapshot:
         graph_node_limit=250,
         lint_page_limit=500,
         auto_review_threshold=0.76,
+        ask_policy=dict(DEFAULT_ASK_POLICY),
     )
 
 
@@ -221,6 +231,19 @@ def ensure_runtime_config(db: Session) -> RuntimeConfig:
 
 
 def runtime_snapshot_from_record(record: RuntimeConfig) -> RuntimeConfigSnapshot:
+    raw_task_profiles = decrypt_task_profiles(getattr(record, "ai_task_profiles", {}) or {})
+    ask_policy = dict(DEFAULT_ASK_POLICY)
+    policy_from_record = raw_task_profiles.get(ASK_POLICY_KEY)
+    if isinstance(policy_from_record, dict):
+        ask_policy.update(
+            {
+                "minimumTopScore": float(policy_from_record.get("minimumTopScore", ask_policy["minimumTopScore"])),
+                "minimumTermCoverage": float(policy_from_record.get("minimumTermCoverage", ask_policy["minimumTermCoverage"])),
+                "allowPartialAnswers": bool(policy_from_record.get("allowPartialAnswers", ask_policy["allowPartialAnswers"])),
+                "allowGeneralFallback": bool(policy_from_record.get("allowGeneralFallback", ask_policy["allowGeneralFallback"])),
+                "crossLingualRewriteEnabled": bool(policy_from_record.get("crossLingualRewriteEnabled", ask_policy["crossLingualRewriteEnabled"])),
+            }
+        )
     answer_profile = _profile_from_record(
         provider=record.answer_provider,
         model=record.answer_model,
@@ -243,7 +266,7 @@ def runtime_snapshot_from_record(record: RuntimeConfig) -> RuntimeConfigSnapshot
         timeout_seconds=90,
     )
     task_profiles = normalize_task_profiles(
-        decrypt_task_profiles(getattr(record, "ai_task_profiles", {}) or {}),
+        raw_task_profiles,
         answer_profile=answer_profile,
         ingest_profile=ingest_profile,
         embedding_profile=embedding_profile,
@@ -259,6 +282,7 @@ def runtime_snapshot_from_record(record: RuntimeConfig) -> RuntimeConfigSnapshot
         graph_node_limit=record.graph_node_limit,
         lint_page_limit=record.lint_page_limit,
         auto_review_threshold=record.auto_review_threshold,
+        ask_policy=ask_policy,
     )
 
 

@@ -35,6 +35,28 @@ If you run Ollama locally, recommended setup is:
 - embeddings: `provider=ollama`, model `nomic-embed-text`
 - Docker base URL: `http://host.docker.internal:11434`
 
+## RAG answer policy (2026-05)
+
+Ask AI now enforces grounded answer policy with explicit response modes:
+
+- `answer`: evidence is sufficient
+- `partial_answer`: evidence is incomplete, answer is limited
+- `no_answer`: knowledge base does not contain enough support
+- `general_fallback`: optional non-official fallback, disabled by default
+
+Runtime settings include Ask policy knobs in `/settings`:
+
+- `minimumTopScore`
+- `minimumTermCoverage`
+- `allowPartialAnswers`
+- `allowGeneralFallback` (dangerous, default `false`)
+- `crossLingualRewriteEnabled` (default `true`)
+
+Responses include evidence diagnostics:
+
+- `answerMode`, `evidenceStatus`, `answerLanguage`, `sourceLanguages`
+- `evidenceGate` and `diagnostics.answerVerification`
+
 ## Stack
 
 - `llm-wiki/`: Next.js 15 frontend

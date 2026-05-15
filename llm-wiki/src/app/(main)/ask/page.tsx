@@ -14,7 +14,7 @@ import { useCreateNote } from '@/hooks/use-notes'
 import { useAuth } from '@/providers/auth-provider'
 import {
   Send, BookOpen, FileText, Layers,
-  Lightbulb, RefreshCw, Plus, Trash2, ShieldCheck, AlertTriangle, Search
+  Lightbulb, RefreshCw, Plus, Trash2, ShieldCheck, AlertTriangle, Search, Bug
 } from 'lucide-react'
 import type { AskResponse, AskScope } from '@/lib/types'
 import Link from 'next/link'
@@ -150,6 +150,7 @@ function HighlightedSnippet({ text, query }: { text: string; query: string }) {
 
 function AnswerDisplay({ response }: { response: AskResponse }) {
   const [selectedCitation, setSelectedCitation] = useState<AskResponse['citations'][number] | null>(null)
+  const [showDebug, setShowDebug] = useState(false)
   const { hasRole } = useAuth()
   const canDebug = hasRole('admin')
   const canSaveNote = hasRole('editor', 'reviewer', 'admin')
@@ -158,7 +159,13 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
   const textCitations = response.citations.filter(citation => !citation.artifactType)
   const verification = response.diagnostics?.answerVerification
   const generation = response.diagnostics?.answerGeneration
+  const evidenceGate = response.evidenceGate ?? response.diagnostics?.evidenceGate
   const usedAiModel = generation?.mode === 'llm'
+  const answerMode = response.answerMode ?? 'answer'
+  const answerLanguage = response.answerLanguage ?? 'en'
+  const sourceLanguages = response.sourceLanguages ?? []
+  const isNoAnswer = answerMode === 'no_answer'
+  const isPartial = answerMode === 'partial_answer'
 
   const renderCitationCard = (cit: AskResponse['citations'][number]) => (
     <EvidenceCard
@@ -282,31 +289,27 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
           )}
         </div>
       )}
-      {response.interpretedQuery && (
-        <div className="rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-xs">
-          <div className="font-medium text-foreground">Interpreted query</div>
-          <div className="mt-1 text-muted-foreground">{response.interpretedQuery.standaloneQuery}</div>
-          <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-            <span>Intent: {response.interpretedQuery.intent}</span>
-            <span>Answer type: {response.interpretedQuery.answerType}</span>
-            {response.interpretedQuery.needsClarification && <span>Clarification needed</span>}
-            {response.interpretedQuery.planner && <span>Planner: {response.interpretedQuery.planner.strategy}</span>}
+      {(isNoAnswer || isPartial) && (
+        <div className={`rounded-lg border px-3 py-2 text-sm ${
+          isNoAnswer
+            ? 'border-amber-200 bg-amber-50 text-amber-950'
+            : 'border-sky-200 bg-sky-50 text-sky-950'
+        }`}>
+          <div className="font-medium">
+            {isNoAnswer ? 'No grounded answer from current knowledge base' : 'Partial answer from limited evidence'}
           </div>
-          {response.interpretedQuery.planner && response.interpretedQuery.planner.subQueries.length > 0 && (
-            <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-              {response.interpretedQuery.planner.subQueries.map(step => (
-                <div key={step.id}>
-                  {step.id}. {step.intent} - {step.query}
-                </div>
-              ))}
-            </div>
+          <div className="mt-1 text-xs opacity-80">
+            {evidenceGate?.reason || (isNoAnswer ? 'Retrieved evidence is not strong enough to answer safely.' : 'Some evidence is available but not enough for a full answer.')}
+          </div>
+          {evidenceGate?.warnings && evidenceGate.warnings.length > 0 && (
+            <div className="mt-1 text-xs opacity-80">{evidenceGate.warnings.join(' ')}</div>
           )}
         </div>
       )}
 
       {/* Confidence */}
       <div className="flex items-center gap-3">
-        <ConfidenceBar score={response.confidence} />
+        {!isNoAnswer && <ConfidenceBar score={response.confidence} />}
         <span
           className={`rounded border px-2 py-0.5 text-xs ${
             usedAiModel
@@ -324,7 +327,32 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
             Contains inference
           </span>
         )}
+        <span className="rounded border border-border/60 bg-card px-2 py-0.5 text-xs text-muted-foreground">
+          Answer mode: {answerMode.replace('_', ' ')}
+        </span>
+        <span className="rounded border border-border/60 bg-card px-2 py-0.5 text-xs text-muted-foreground">
+          Language: {answerLanguage.toUpperCase()} {sourceLanguages.length > 0 ? `| Sources: ${sourceLanguages.map(lang => lang.toUpperCase()).join(', ')}` : ''}
+        </span>
+        {canDebug && (
+          <button
+            type="button"
+            onClick={() => setShowDebug(prev => !prev)}
+            className="inline-flex items-center gap-1 rounded border border-border/60 bg-card px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+          >
+            <Bug className="h-3 w-3" />
+            {showDebug ? 'Hide debug' : 'Show debug'}
+          </button>
+        )}
       </div>
+      {sourceLanguages.length > 0 && sourceLanguages.some(lang => lang.toLowerCase() !== (answerLanguage || '').toLowerCase()) && (
+        <div className="text-xs text-muted-foreground">Source excerpt is shown in original language.</div>
+      )}
+      {isNoAnswer && (
+        <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+          <div className="font-medium text-foreground">Suggested actions</div>
+          <div className="mt-1">Upload a related source, broaden scope, ask a narrower question, or inspect top weak matches in Admin Debug.</div>
+        </div>
+      )}
 
       {verification && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${
@@ -474,12 +502,40 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
         </div>
       )}
 
-      {canDebug && response.diagnostics && (
+      {canDebug && showDebug && response.interpretedQuery && (
+        <div className="rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-xs">
+          <div className="font-medium text-foreground">Interpreted query</div>
+          <div className="mt-1 text-muted-foreground">{response.interpretedQuery.standaloneQuery}</div>
+          <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+            <span>Intent: {response.interpretedQuery.intent}</span>
+            <span>Answer type: {response.interpretedQuery.answerType}</span>
+            {response.interpretedQuery.needsClarification && <span>Clarification needed</span>}
+            {response.interpretedQuery.planner && <span>Planner: {response.interpretedQuery.planner.strategy}</span>}
+          </div>
+          {response.interpretedQuery.planner && response.interpretedQuery.planner.subQueries.length > 0 && (
+            <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+              {response.interpretedQuery.planner.subQueries.map(step => (
+                <div key={step.id}>
+                  {step.id}. {step.intent} - {step.query}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {canDebug && showDebug && response.diagnostics && (
         <div className="rounded-lg border border-border/60 bg-background px-3 py-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Admin Debug</div>
           <div className="mt-2 grid gap-2 text-xs text-muted-foreground">
             <div>Candidate count: {response.diagnostics.candidateCount}</div>
             <div>Retrieval limit: {response.diagnostics.retrievalLimit}</div>
+            {response.evidenceStatus && <div>Evidence status: {response.evidenceStatus}</div>}
+            {evidenceGate && (
+              <div>
+                Gate: {evidenceGate.status} · passed={String(evidenceGate.passed)} · topScore={typeof evidenceGate.topScore === 'number' ? evidenceGate.topScore.toFixed(2) : '-'} · selected={evidenceGate.selectedCount ?? '-'} · candidates={evidenceGate.candidateCount ?? '-'}
+              </div>
+            )}
             {response.retrievalDebugId && <div>Debug ID: {response.retrievalDebugId}</div>}
             {response.diagnostics.planning && <div>Planning strategy: {response.diagnostics.planning.strategy}</div>}
           </div>

@@ -858,6 +858,13 @@ export interface AskInterpretedQuery {
   needsClarification: boolean
   clarificationQuestion?: string | null
   conversationSummary?: string | null
+  answerLanguage?: string | null
+  queryVariants?: Array<{
+    id: string
+    query: string
+    language?: string
+    type?: string
+  }>
   planner?: {
     strategy: string
     rationale?: string | null
@@ -926,11 +933,33 @@ export interface AskDiagnostics {
   answerVerification?: {
     supported: boolean
     coverage: number
+    coverageLevel?: 'full' | 'partial' | 'none' | string
+    finalDecision?: 'answer' | 'partial_answer' | 'no_answer' | string
+    risk?: 'low' | 'medium' | 'high' | string
     answerEvidenceOverlap?: number
     citationCount: number
     missingEvidenceRisk: 'low' | 'medium' | 'high' | string
+    unsupportedClaims?: string[]
+    missingEvidence?: string[]
     notes: string[]
   } | null
+  evidenceGate?: {
+    passed: boolean
+    status: 'supported' | 'partial' | 'insufficient' | string
+    reason: string
+    warnings: string[]
+    topScore: number
+    coverage: number
+    selectedCount: number
+    candidateCount: number
+    citationCount: number
+  } | null
+  queryVariants?: Array<{
+    id: string
+    query: string
+    language?: string
+    type?: string
+  }>
   answerGeneration?: {
     mode: 'llm' | 'retrieval_fallback' | string
     provider?: string | null
@@ -966,6 +995,21 @@ export interface AskResponse {
   citations: Citation[]
   relatedPages: RelatedPage[]
   relatedSources: RelatedSource[]
+  answerMode?: 'answer' | 'partial_answer' | 'no_answer' | 'general_fallback' | string
+  answerLanguage?: string | null
+  sourceLanguages?: string[]
+  evidenceStatus?: 'supported' | 'partial' | 'insufficient' | 'unsupported' | string
+  evidenceGate?: {
+    passed: boolean
+    status: 'supported' | 'partial' | 'insufficient' | string
+    reason: string
+    warnings: string[]
+    topScore: number
+    coverage: number
+    selectedCount: number
+    candidateCount: number
+    citationCount: number
+  } | null
   confidence: number
   isInference: boolean
   uncertainty?: string | null
@@ -1034,6 +1078,13 @@ export interface RuntimeSettings {
   graphNodeLimit: number
   lintPageLimit: number
   autoReviewThreshold: number
+  askPolicy: {
+    minimumTopScore: number
+    minimumTermCoverage: number
+    allowPartialAnswers: boolean
+    allowGeneralFallback: boolean
+    crossLingualRewriteEnabled: boolean
+  }
   updatedAt: string
 }
 

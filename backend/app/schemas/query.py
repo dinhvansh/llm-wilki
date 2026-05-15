@@ -41,6 +41,8 @@ class AskInterpretedQueryOut(BaseModel):
     clarificationQuestion: str | None = None
     conversationSummary: str | None = None
     planner: dict | None = None
+    answerLanguage: str | None = None
+    queryVariants: list[dict] = []
 
 
 class AskScopeOut(BaseModel):
@@ -69,6 +71,8 @@ class AskDiagnosticsOut(BaseModel):
     selectedContext: list[dict] = []
     contextCoverage: dict = {}
     answerVerification: dict | None = None
+    evidenceGate: dict | None = None
+    queryVariants: list[dict] = []
 
 
 class AskRequest(BaseModel):
@@ -134,6 +138,11 @@ class AskResponseOut(BaseModel):
     citations: list[CitationOut]
     relatedPages: list[RelatedPageOut]
     relatedSources: list[RelatedSourceOut]
+    answerMode: str | None = None
+    answerLanguage: str | None = None
+    sourceLanguages: list[str] = []
+    evidenceStatus: str | None = None
+    evidenceGate: dict | None = None
     confidence: float
     isInference: bool
     uncertainty: str | None = None

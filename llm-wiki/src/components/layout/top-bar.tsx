@@ -31,7 +31,7 @@ export function TopBar() {
   }
 
   return (
-    <header className="surface-panel border-b border-border/80 px-5 py-3">
+    <header className="surface-panel sticky top-0 z-20 border-b border-border/80 px-5 py-3">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-[18rem] flex-1">
           <div className="relative">

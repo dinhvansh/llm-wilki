@@ -53,6 +53,13 @@ const EMPTY_FORM: Omit<RuntimeSettings, 'updatedAt'> = {
   graphNodeLimit: 250,
   lintPageLimit: 500,
   autoReviewThreshold: 0.76,
+  askPolicy: {
+    minimumTopScore: 0.45,
+    minimumTermCoverage: 0.35,
+    allowPartialAnswers: true,
+    allowGeneralFallback: false,
+    crossLingualRewriteEnabled: true,
+  },
 }
 
 function Section({
@@ -134,12 +141,19 @@ export default function SettingsPage() {
   const [taskModelResults, setTaskModelResults] = useState<Partial<Record<AITaskKey, RuntimeModelListResult>>>({})
   const [taskModelOptions, setTaskModelOptions] = useState<Partial<Record<AITaskKey, string[]>>>({})
   const [expandedTask, setExpandedTask] = useState<AITaskKey | null>('bpm_generation')
+  const [saveNotice, setSaveNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
     if (!data) return
     const { updatedAt: _updatedAt, ...rest } = data
     setForm(rest)
   }, [data])
+
+  useEffect(() => {
+    if (!saveNotice || saveNotice.tone !== 'success') return
+    const timeoutId = window.setTimeout(() => setSaveNotice(null), 4000)
+    return () => window.clearTimeout(timeoutId)
+  }, [saveNotice])
 
   if (isLoading) return <LoadingSpinner label="Loading settings..." />
   if (isError) {
@@ -166,6 +180,7 @@ export default function SettingsPage() {
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    setSaveNotice(null)
     const normalized = deriveLegacyFields({
       ...form,
       chunkSizeWords: Number(form.chunkSizeWords),
@@ -176,6 +191,13 @@ export default function SettingsPage() {
       graphNodeLimit: Number(form.graphNodeLimit),
       lintPageLimit: Number(form.lintPageLimit),
       autoReviewThreshold: Number(form.autoReviewThreshold),
+      askPolicy: {
+        minimumTopScore: Number(form.askPolicy.minimumTopScore),
+        minimumTermCoverage: Number(form.askPolicy.minimumTermCoverage),
+        allowPartialAnswers: Boolean(form.askPolicy.allowPartialAnswers),
+        allowGeneralFallback: Boolean(form.askPolicy.allowGeneralFallback),
+        crossLingualRewriteEnabled: Boolean(form.askPolicy.crossLingualRewriteEnabled),
+      },
       aiTaskProfiles: Object.fromEntries(
         Object.entries(form.aiTaskProfiles).map(([task, profile]) => [
           task,
@@ -186,7 +208,18 @@ export default function SettingsPage() {
         ]),
       ) as RuntimeSettings['aiTaskProfiles'],
     })
-    await updateMutation.mutateAsync(normalized)
+    try {
+      const saved = await updateMutation.mutateAsync(normalized)
+      setSaveNotice({
+        tone: 'success',
+        message: `Settings saved. Updated at ${saved.updatedAt ?? 'just now'}.`,
+      })
+    } catch (mutationError) {
+      setSaveNotice({
+        tone: 'error',
+        message: (mutationError as Error).message || 'Could not save settings.',
+      })
+    }
   }
 
   const testConnection = async (task: AITaskKey) => {
@@ -262,6 +295,18 @@ export default function SettingsPage() {
       />
 
       <form id="settings-form" onSubmit={onSubmit} className="space-y-5 p-6">
+        {saveNotice ? (
+          <div
+            className={`rounded-lg border px-4 py-3 text-sm ${
+              saveNotice.tone === 'success'
+                ? 'border-green-200 bg-green-50 text-green-700'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            {saveNotice.message}
+          </div>
+        ) : null}
+
         <Section
           title="Task-Scoped AI Profiles"
           description="Model selection is separated by business task. BPM/OpenFlowKit has its own provider so process generation can use a stronger diagram-capable model without changing Ask AI or ingest."
@@ -411,10 +456,63 @@ export default function SettingsPage() {
           </Field>
         </Section>
 
+        <Section
+          title="Ask Policy"
+          description="Safety guardrails for grounded RAG answers."
+        >
+          <Field label="Minimum Top Score">
+            <TextInput
+              value={form.askPolicy.minimumTopScore}
+              onChange={e => setForm(prev => ({ ...prev, askPolicy: { ...prev.askPolicy, minimumTopScore: Number(e.target.value) } }))}
+              type="number"
+              min={0}
+              max={1}
+              step="0.01"
+            />
+          </Field>
+          <Field label="Minimum Term Coverage">
+            <TextInput
+              value={form.askPolicy.minimumTermCoverage}
+              onChange={e => setForm(prev => ({ ...prev, askPolicy: { ...prev.askPolicy, minimumTermCoverage: Number(e.target.value) } }))}
+              type="number"
+              min={0}
+              max={1}
+              step="0.01"
+            />
+          </Field>
+          <Field label="Allow Partial Answers">
+            <SelectInput
+              value={String(form.askPolicy.allowPartialAnswers)}
+              onChange={e => setForm(prev => ({ ...prev, askPolicy: { ...prev.askPolicy, allowPartialAnswers: e.target.value === 'true' } }))}
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </SelectInput>
+          </Field>
+          <Field label="Allow General Fallback (Dangerous)">
+            <SelectInput
+              value={String(form.askPolicy.allowGeneralFallback)}
+              onChange={e => setForm(prev => ({ ...prev, askPolicy: { ...prev.askPolicy, allowGeneralFallback: e.target.value === 'true' } }))}
+            >
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </SelectInput>
+          </Field>
+          <Field label="Cross-Lingual Rewrite Enabled">
+            <SelectInput
+              value={String(form.askPolicy.crossLingualRewriteEnabled)}
+              onChange={e => setForm(prev => ({ ...prev, askPolicy: { ...prev.askPolicy, crossLingualRewriteEnabled: e.target.value === 'true' } }))}
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </SelectInput>
+          </Field>
+        </Section>
+
         <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
           Last updated: <span className="font-medium text-foreground">{data?.updatedAt ?? 'unknown'}</span>
-          {updateMutation.isSuccess && <span className="ml-3 text-primary">Saved.</span>}
-          {updateMutation.isError && <span className="ml-3 text-destructive">{(updateMutation.error as Error).message}</span>}
+          {saveNotice?.tone === 'success' && <span className="ml-3 text-primary">Saved.</span>}
+          {saveNotice?.tone === 'error' && <span className="ml-3 text-destructive">{saveNotice.message}</span>}
         </div>
       </form>
     </div>

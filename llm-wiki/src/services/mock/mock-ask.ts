@@ -14,7 +14,27 @@ export function createMockQueryService(): IQueryService {
         question.toLowerCase().includes(k.toLowerCase().split(' ')[0])
       )
       if (key && MOCK_ASK_RESPONSES[key]) {
-        return { ...MOCK_ASK_RESPONSES[key], id: `ask-${Date.now()}`, sessionId: sessionId ?? `chat-${Date.now()}`, answeredAt: new Date().toISOString() }
+        return {
+          ...MOCK_ASK_RESPONSES[key],
+          id: `ask-${Date.now()}`,
+          sessionId: sessionId ?? `chat-${Date.now()}`,
+          answerMode: 'answer',
+          answerLanguage: 'en',
+          sourceLanguages: ['en'],
+          evidenceStatus: 'supported',
+          evidenceGate: {
+            passed: true,
+            status: 'supported',
+            reason: 'sufficient_evidence',
+            warnings: [],
+            topScore: 0.81,
+            coverage: 0.72,
+            selectedCount: 3,
+            candidateCount: 9,
+            citationCount: (MOCK_ASK_RESPONSES[key].citations ?? []).length,
+          },
+          answeredAt: new Date().toISOString(),
+        }
       }
       // Fallback for any question
       return {
@@ -51,6 +71,21 @@ export function createMockQueryService(): IQueryService {
         citations: [],
         relatedPages: [],
         relatedSources: [],
+        answerMode: 'no_answer',
+        answerLanguage: 'en',
+        sourceLanguages: ['unknown'],
+        evidenceStatus: 'insufficient',
+        evidenceGate: {
+          passed: false,
+          status: 'insufficient',
+          reason: 'no_grounded_candidates',
+          warnings: ['No grounded evidence candidates were available.'],
+          topScore: 0,
+          coverage: 0,
+          selectedCount: 0,
+          candidateCount: 0,
+          citationCount: 0,
+        },
         confidence: 65,
         isInference: true,
         uncertainty: null,

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.embedding_client import embedding_client
 from app.core.llm_client import llm_client
 from app.core.runtime_config import (
+    ASK_POLICY_KEY,
+    DEFAULT_ASK_POLICY,
     AI_TASK_KEYS,
     LLMProfile,
     build_default_task_profiles,
@@ -18,7 +20,7 @@ from app.core.runtime_config import (
     runtime_snapshot_from_record,
     serialize_task_profiles,
 )
-from app.core.secrets import decrypt_secret, encrypt_secret, encrypt_task_profiles, is_encrypted_secret
+from app.core.secrets import decrypt_secret, decrypt_task_profiles, encrypt_secret, encrypt_task_profiles, is_encrypted_secret
 from app.services.audit import create_audit_log
 
 
@@ -162,6 +164,10 @@ def _encrypt_runtime_record_secrets(record) -> bool:
 
 def _settings_payload(record) -> dict:
     task_profiles = _task_profiles_payload(record)
+    raw_decrypted = decrypt_task_profiles(getattr(record, "ai_task_profiles", {}) or {})
+    ask_policy = dict(DEFAULT_ASK_POLICY)
+    if isinstance(raw_decrypted.get(ASK_POLICY_KEY), dict):
+        ask_policy.update(raw_decrypted[ASK_POLICY_KEY])
     return {
         "answerProvider": record.answer_provider,
         "answerModel": record.answer_model,
@@ -187,6 +193,13 @@ def _settings_payload(record) -> dict:
         "graphNodeLimit": record.graph_node_limit,
         "lintPageLimit": record.lint_page_limit,
         "autoReviewThreshold": record.auto_review_threshold,
+        "askPolicy": {
+            "minimumTopScore": float(ask_policy.get("minimumTopScore", DEFAULT_ASK_POLICY["minimumTopScore"])),
+            "minimumTermCoverage": float(ask_policy.get("minimumTermCoverage", DEFAULT_ASK_POLICY["minimumTermCoverage"])),
+            "allowPartialAnswers": bool(ask_policy.get("allowPartialAnswers", DEFAULT_ASK_POLICY["allowPartialAnswers"])),
+            "allowGeneralFallback": bool(ask_policy.get("allowGeneralFallback", DEFAULT_ASK_POLICY["allowGeneralFallback"])),
+            "crossLingualRewriteEnabled": bool(ask_policy.get("crossLingualRewriteEnabled", DEFAULT_ASK_POLICY["crossLingualRewriteEnabled"])),
+        },
         "updatedAt": _iso(record.updated_at),
     }
 
@@ -248,6 +261,7 @@ def _extract_change_summary(before: dict, after: dict) -> dict:
             "graphNodeLimit",
             "lintPageLimit",
             "autoReviewThreshold",
+            "askPolicy",
         )
         if before.get(key) != after.get(key)
     }
@@ -274,7 +288,6 @@ def update_runtime_settings(db: Session, payload: dict, *, actor_name: str | Non
     record.embedding_model = legacy["embedding_model"]
     record.embedding_api_key = encrypt_secret(legacy["embedding_api_key"])
     record.embedding_base_url = legacy["embedding_base_url"]
-    record.ai_task_profiles = encrypt_task_profiles(task_profiles)
     record.chunk_mode = payload["chunkMode"]
     record.chunk_size_words = payload["chunkSizeWords"]
     record.chunk_overlap_words = payload["chunkOverlapWords"]
@@ -284,6 +297,18 @@ def update_runtime_settings(db: Session, payload: dict, *, actor_name: str | Non
     record.graph_node_limit = payload["graphNodeLimit"]
     record.lint_page_limit = payload["lintPageLimit"]
     record.auto_review_threshold = payload["autoReviewThreshold"]
+    ask_policy_payload = payload.get("askPolicy") or {}
+    encrypted_raw_profiles = encrypt_task_profiles(task_profiles)
+    encrypted_raw_profiles[ASK_POLICY_KEY] = {
+        "minimumTopScore": float(ask_policy_payload.get("minimumTopScore", DEFAULT_ASK_POLICY["minimumTopScore"])),
+        "minimumTermCoverage": float(ask_policy_payload.get("minimumTermCoverage", DEFAULT_ASK_POLICY["minimumTermCoverage"])),
+        "allowPartialAnswers": bool(ask_policy_payload.get("allowPartialAnswers", DEFAULT_ASK_POLICY["allowPartialAnswers"])),
+        "allowGeneralFallback": bool(ask_policy_payload.get("allowGeneralFallback", DEFAULT_ASK_POLICY["allowGeneralFallback"])),
+        "crossLingualRewriteEnabled": bool(
+            ask_policy_payload.get("crossLingualRewriteEnabled", DEFAULT_ASK_POLICY["crossLingualRewriteEnabled"])
+        ),
+    }
+    record.ai_task_profiles = encrypted_raw_profiles
     record.updated_at = datetime.now(timezone.utc)
     db.add(record)
     db.commit()
@@ -463,6 +488,7 @@ def merge_runtime_settings_import(current: dict, incoming: dict) -> dict:
             merged_profile["apiKey"] = current_profile.get("apiKey", "")
         merged_tasks[task] = merged_profile
     merged["aiTaskProfiles"] = merged_tasks
+    merged["askPolicy"] = {**(current.get("askPolicy") or {}), **(incoming.get("askPolicy") or {})}
     for key, value in list(merged.items()):
         if key.lower().endswith("apikey") and value == "***":
             merged[key] = current.get(key, "")

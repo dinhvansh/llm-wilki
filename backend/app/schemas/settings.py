@@ -20,6 +20,14 @@ class AITaskProfilesPayload(BaseModel):
     embeddings: AIModelProfilePayload = Field(default_factory=lambda: AIModelProfilePayload(timeoutSeconds=90))
 
 
+class AskPolicyPayload(BaseModel):
+    minimumTopScore: float = Field(default=0.45, ge=0.0, le=1.0)
+    minimumTermCoverage: float = Field(default=0.35, ge=0.0, le=1.0)
+    allowPartialAnswers: bool = True
+    allowGeneralFallback: bool = False
+    crossLingualRewriteEnabled: bool = True
+
+
 class SettingsPayload(BaseModel):
     answerProvider: str = "none"
     answerModel: str = ""
@@ -45,6 +53,7 @@ class SettingsPayload(BaseModel):
     graphNodeLimit: int = Field(default=250, ge=25, le=2000)
     lintPageLimit: int = Field(default=500, ge=50, le=5000)
     autoReviewThreshold: float = Field(default=0.76, ge=0.0, le=1.0)
+    askPolicy: AskPolicyPayload = Field(default_factory=AskPolicyPayload)
 
 
 class SettingsResponse(SettingsPayload):

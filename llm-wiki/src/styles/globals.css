@@ -32,16 +32,20 @@
     scrollbar-color: transparent transparent;
   }
   html {
+    height: 100%;
     scroll-behavior: smooth;
+    overflow: hidden;
   }
   body {
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
     background-color: var(--color-background);
     color: var(--color-foreground);
     background-image:
       radial-gradient(circle at top left, rgba(213, 108, 44, 0.12), transparent 24rem),
       radial-gradient(circle at top right, rgba(46, 104, 145, 0.08), transparent 18rem),
       linear-gradient(180deg, rgba(255,255,255,0.7), rgba(250,245,236,0.9));
-    min-height: 100vh;
     font-family: var(--font-sans);
   }
 

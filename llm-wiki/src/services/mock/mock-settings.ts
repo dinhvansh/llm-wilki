@@ -34,6 +34,13 @@ let settingsState: RuntimeSettings = {
   graphNodeLimit: 250,
   lintPageLimit: 500,
   autoReviewThreshold: 0.76,
+  askPolicy: {
+    minimumTopScore: 0.45,
+    minimumTermCoverage: 0.35,
+    allowPartialAnswers: true,
+    allowGeneralFallback: false,
+    crossLingualRewriteEnabled: true,
+  },
   updatedAt: new Date().toISOString(),
 }
 

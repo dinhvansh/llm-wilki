@@ -10,7 +10,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, breadcrumbs, actions, className }: PageHeaderProps) {
   return (
-    <div className={cn("surface-panel sticky top-0 z-20 border-b border-border/80 px-6 py-4", className)}>
+    <div className={cn("surface-panel border-b border-border/80 px-6 py-4", className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <div className="mb-2 flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           {breadcrumbs.map((crumb, i) => (

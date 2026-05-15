@@ -20,6 +20,7 @@ from app.services.context_assembly import assemble_context_pack
 from app.services.evidence_policy import candidate_evidence_grade, citation_reason, select_citation_candidates
 from app.services.pages import create_page_with_version
 from app.services.permissions import can_access_collection_id
+from app.services.retrieval_quality_gate import evaluate_retrieval_quality
 from app.services.retrieval_candidates import retrieve_candidates
 
 
@@ -83,6 +84,15 @@ INTENT_PRIORITY = (
 
 SEARCHABLE_SOURCE_STATUSES = {"indexed", "completed"}
 SEARCHABLE_PAGE_STATUSES = {"published", "in_review"}
+ANSWER_MODE_ANSWER = "answer"
+ANSWER_MODE_PARTIAL = "partial_answer"
+ANSWER_MODE_NO_ANSWER = "no_answer"
+ANSWER_MODE_GENERAL_FALLBACK = "general_fallback"
+
+EVIDENCE_STATUS_SUPPORTED = "supported"
+EVIDENCE_STATUS_PARTIAL = "partial"
+EVIDENCE_STATUS_INSUFFICIENT = "insufficient"
+EVIDENCE_STATUS_UNSUPPORTED = "unsupported"
 
 
 def _searchable_source_filter(query):
@@ -192,6 +202,97 @@ def _strict_content_terms(value: str) -> list[str]:
         if (len(normalized) >= 5 or normalized in short_domain_terms) and normalized not in QUERY_STOPWORDS:
             terms.append(normalized)
     return _dedupe_keep_order(terms)
+
+
+def _detect_question_language(question: str) -> str:
+    lowered = question.lower()
+    vietnamese_markers = (" khong ", " tai ", " nguon ", " du lieu ", "chinh sach", "cau hoi")
+    if any(marker in f" {lowered} " for marker in vietnamese_markers):
+        return "vi"
+    if any(ord(char) > 127 for char in question):
+        return "vi"
+    return "en"
+
+
+def _looks_english_heavy(text: str) -> bool:
+    sample = re.sub(r"\s+", " ", (text or "").strip())[:600]
+    if not sample:
+        return False
+    if any(char in sample for char in "ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"):
+        return False
+    words = re.findall(r"[A-Za-z]{3,}", sample)
+    return len(words) >= 12
+
+
+def _infer_source_languages(selected_candidates: list[dict]) -> list[str]:
+    languages: list[str] = []
+    seen: set[str] = set()
+    for candidate in selected_candidates:
+        source = candidate.get("source")
+        metadata = getattr(source, "metadata_json", {}) if source else {}
+        language = str((metadata or {}).get("language") or (metadata or {}).get("detectedLanguage") or "").strip().lower()
+        if not language:
+            evidence = (str(candidate.get("excerpt") or "") + " " + str(candidate.get("text") or "")).strip()
+            language = "vi" if any(ord(char) > 127 for char in evidence[:220]) else "en"
+        if language and language not in seen:
+            seen.add(language)
+            languages.append(language)
+    return languages or ["unknown"]
+
+
+def _no_answer_text(language: str) -> str:
+    if language == "vi":
+        return (
+            "Tôi chưa tìm thấy đủ bằng chứng liên quan trong knowledge base để trả lời chính xác. "
+            "Bạn có thể upload thêm tài liệu liên quan, hỏi cụ thể hơn, hoặc mở rộng phạm vi tìm kiếm."
+        )
+    return (
+        "I could not find enough relevant evidence in the current knowledge base to answer this accurately. "
+        "Upload a related source, narrow the question, or expand the search scope."
+    )
+
+
+def _partial_answer_prefix(language: str) -> str:
+    if language == "vi":
+        return "Tôi chỉ tìm thấy bằng chứng cho một phần câu hỏi. Câu trả lời dưới đây chỉ bao gồm phần có nguồn hỗ trợ."
+    return "I found evidence for part of the question, but not enough to answer everything. The answer below only covers the supported portion."
+
+
+def _build_query_variants(question: str, answer_language: str, *, cross_lingual_enabled: bool = True) -> list[dict]:
+    base = re.sub(r"\s+", " ", question.strip())
+    variants: list[dict] = [{"id": "v1", "query": base, "language": answer_language, "type": "original"}]
+    vi_to_en = {
+        "chinh sach": "policy",
+        "nghi phep": "annual leave",
+        "hoan tien": "refund",
+        "quy trinh": "procedure",
+        "nguon": "source",
+        "du lieu": "data",
+    }
+    en_to_vi = {
+        "policy": "chinh sach",
+        "annual leave": "nghi phep",
+        "refund": "hoan tien",
+        "procedure": "quy trinh",
+        "source": "nguon",
+        "data": "du lieu",
+    }
+    lowered = base.lower()
+    rewritten = lowered
+    mapping = vi_to_en if answer_language == "vi" else en_to_vi
+    for src, target in mapping.items():
+        rewritten = rewritten.replace(src, target)
+    rewritten = re.sub(r"\s+", " ", rewritten).strip()
+    if cross_lingual_enabled and rewritten and rewritten != lowered:
+        variants.append(
+            {
+                "id": "v2",
+                "query": rewritten,
+                "language": "en" if answer_language == "vi" else "vi",
+                "type": "cross_lingual_rewrite",
+            }
+        )
+    return variants
 
 
 def _evidence_covers_question_terms(question: str, selected_candidates: list[dict]) -> bool:
@@ -1513,6 +1614,7 @@ def _retrieve_candidates(
     runtime,
     interpreted: dict,
     query_embedding: list[float] | None,
+    query_variants: list[dict] | None = None,
     actor=None,
 ) -> list[dict]:
     return retrieve_candidates(
@@ -1524,6 +1626,7 @@ def _retrieve_candidates(
         single_query_retriever=_retrieve_candidates_for_query,
         planned_candidate_merger=_merge_planned_candidates,
         query_embedder=_embed_query,
+        query_variants=query_variants,
     )
 
 
@@ -1726,10 +1829,21 @@ def _format_answer_sections(
     selected: list[dict],
     interpreted: dict,
     conflicts: list[dict],
+    language: str = "en",
     suggested_prompts: list[dict] | None = None,
     uncertainty: str | None = None,
 ) -> str:
+    is_vi = language == "vi"
     if not selected:
+        if is_vi:
+            return (
+                "## Trả lời trực tiếp\n\n"
+                f"Tôi chưa có đủ bằng chứng grounded để trả lời **{question}** từ knowledge base hiện tại.\n\n"
+                "## Lý do\n\n"
+                "Không có source, page summary, notebook note, claim, hoặc chunk nào đủ hỗ trợ để chọn.\n\n"
+                "## Độ bất định / Thiếu bằng chứng\n\n"
+                "Bạn hãy nêu rõ source, page, section, hoặc term cụ thể để làm neo trả lời."
+            )
         return (
             "## Direct Answer\n\n"
             f"I do not yet have enough grounded evidence to answer **{question}** from the current knowledge base.\n\n"
@@ -1743,21 +1857,25 @@ def _format_answer_sections(
     top_excerpt = top.get("excerpt", "").strip()
     direct = top["text"][:320].strip()
     why_line = (
-        f"This answer is driven first by **{top_source.title}** via `{top['type']}` evidence."
+        f"Câu trả lời này được dẫn dắt bởi **{top_source.title}** thông qua bằng chứng `{top['type']}`."
+        if is_vi and top_source
+        else f"Câu trả lời này được dẫn dắt bởi bằng chứng `{top['type']}` được chọn cho intent `{interpreted.get('intent')}`."
+        if is_vi
+        else f"This answer is driven first by **{top_source.title}** via `{top['type']}` evidence."
         if top_source
         else f"This answer is driven first by `{top['type']}` evidence selected for intent `{interpreted.get('intent')}`."
     )
-    lines = ["## Direct Answer", "", direct, "", "## Why", "", why_line]
+    lines = ["## Trả lời trực tiếp" if is_vi else "## Direct Answer", "", direct, "", "## Lý do" if is_vi else "## Why", "", why_line]
     if top_excerpt:
-        lines.extend(["", f"Primary grounded signal: {top_excerpt}"])
-    lines.extend(["", "## Evidence By Source", ""])
+        lines.extend(["", f"Tín hiệu grounded chính: {top_excerpt}" if is_vi else f"Primary grounded signal: {top_excerpt}"])
+    lines.extend(["", "## Bằng chứng theo nguồn" if is_vi else "## Evidence By Source", ""])
     for candidate in selected[:3]:
         label = candidate["source"].title if candidate.get("source") else candidate["page"].title if candidate.get("page") else candidate["type"]
         reason = candidate.get("diagnostics", {}).get("rerankReason")
         reason_suffix = f" | rerank: {reason}" if reason else ""
         lines.append(f"- **{label}** (`{candidate['type']}`): {candidate['excerpt'].strip()}{reason_suffix}")
     if conflicts:
-        lines.extend(["", "## Conflicts / Caveats", ""])
+        lines.extend(["", "## Xung đột / Lưu ý" if is_vi else "## Conflicts / Caveats", ""])
         for conflict in conflicts:
             lines.append(
                 f"- {conflict['summary']} Preferred: **{conflict.get('preferredSourceTitle') or 'N/A'}** "
@@ -1766,10 +1884,48 @@ def _format_answer_sections(
                 f"({conflict.get('competingReason') or 'no authority note'})."
             )
     if uncertainty:
-        lines.extend(["", "## Uncertainty / Missing Evidence", "", uncertainty])
+        lines.extend(["", "## Độ bất định / Thiếu bằng chứng" if is_vi else "## Uncertainty / Missing Evidence", "", uncertainty])
     if suggested_prompts:
-        lines.extend(["", "## Recommended Next Question", "", f"- {suggested_prompts[0]['text']}"])
+        lines.extend(["", "## Gợi ý câu hỏi tiếp theo" if is_vi else "## Recommended Next Question", "", f"- {suggested_prompts[0]['text']}"])
     return "\n".join(lines).strip()
+
+
+def _normalize_answer_language(answer: str, answer_language: str, source_languages: list[str], *, used_llm_answer: bool) -> str:
+    if answer_language != "vi":
+        return answer
+    normalized = answer or ""
+    heading_map = {
+        "## Direct Answer": "## Tra loi truc tiep",
+        "## Why": "## Ly do",
+        "## Evidence By Source": "## Bang chung theo nguon",
+        "## Conflicts / Caveats": "## Xung dot / Luu y",
+        "## Uncertainty / Missing Evidence": "## Do bat dinh / Thieu bang chung",
+        "## Recommended Next Question": "## Goi y cau hoi tiep theo",
+    }
+    heading_map = {
+        "## Direct Answer": "## Trả lời trực tiếp",
+        "## Why": "## Lý do",
+        "## Evidence By Source": "## Bằng chứng theo nguồn",
+        "## Conflicts / Caveats": "## Xung đột / Lưu ý",
+        "## Uncertainty / Missing Evidence": "## Độ bất định / Thiếu bằng chứng",
+        "## Recommended Next Question": "## Gợi ý câu hỏi tiếp theo",
+    }
+    for en_heading, vi_heading in heading_map.items():
+        normalized = normalized.replace(en_heading, vi_heading)
+    if _looks_english_heavy(normalized):
+        source_hint = ", ".join(source_languages).upper() if source_languages else "N/A"
+        prefix = (
+            "Lưu ý: Câu trả lời dưới đây được tạo từ nguồn tài liệu gốc (có thể là tiếng Anh). "
+            f"Ngôn ngữ nguồn: {source_hint}. "
+            "Bạn có thể bật model trả lời để dịch đầy đủ thông tin sang tiếng Việt."
+        )
+        if used_llm_answer:
+            prefix = (
+                "Lưu ý: Hệ thống đã ưu tiên bằng chứng nguồn gốc. Nếu còn đoạn tiếng Anh, "
+                "hãy tăng cường cấu hình model để dịch tiếng Việt chất lượng cao hơn."
+            )
+        normalized = f"{prefix}\n\n{normalized}"
+    return normalized
 
 
 def _build_clarification_response(session_id: str, question: str, interpreted: dict, runtime, scope: dict | None = None) -> dict:
@@ -2388,8 +2544,15 @@ def ask(
     page_id: str | None = None,
     actor=None,
 ) -> dict:
-    session = _ensure_chat_session(db, session_id, question)
+    answer_language = _detect_question_language(question)
     runtime = load_runtime_snapshot(db)
+    ask_policy = dict(getattr(runtime, "ask_policy", {}) or {})
+    query_variants = _build_query_variants(
+        question,
+        answer_language,
+        cross_lingual_enabled=bool(ask_policy.get("crossLingualRewriteEnabled", True)),
+    )
+    session = _ensure_chat_session(db, session_id, question)
     recent_messages = _recent_session_messages(db, session.id)
     interpreted = _build_query_understanding(
         question,
@@ -2398,6 +2561,8 @@ def ask(
         collection_id=collection_id,
         page_id=page_id,
     )
+    interpreted["answerLanguage"] = answer_language
+    interpreted["queryVariants"] = query_variants
     scope_summary = _resolve_scope_summary(
         db,
         source_id=interpreted.get("filters", {}).get("source_id"),
@@ -2414,8 +2579,9 @@ def ask(
         return response
 
     standalone_query = interpreted["standaloneQuery"]
-    query_embedding = _embed_query(runtime, standalone_query)
-    candidates = _retrieve_candidates(db, runtime, interpreted, query_embedding, actor=actor)
+    primary_variant_query = str(query_variants[0]["query"] if query_variants else standalone_query)
+    query_embedding = _embed_query(runtime, primary_variant_query)
+    candidates = _retrieve_candidates(db, runtime, interpreted, query_embedding, query_variants=query_variants, actor=actor)
     reranked_candidates = _rerank_candidates(candidates, interpreted, limit=max(runtime.retrieval_limit * 3, 12))
     selected_candidates, context_pack, context_coverage = _build_context_pack(reranked_candidates, interpreted, runtime.retrieval_limit)
     if scope_summary and selected_candidates and not _has_grounded_scope_match(selected_candidates):
@@ -2426,6 +2592,26 @@ def ask(
         selected_candidates = []
         context_pack = []
         context_coverage = {"selectedCount": 0, "termCoverageInsufficient": True}
+    evidence_gate = evaluate_retrieval_quality(
+        question=standalone_query,
+        interpreted=interpreted,
+        reranked_candidates=reranked_candidates,
+        selected_candidates=selected_candidates,
+        context_coverage=context_coverage,
+        scope_summary=scope_summary,
+    )
+    min_top_score = float(ask_policy.get("minimumTopScore", 0.45))
+    min_term_coverage = float(ask_policy.get("minimumTermCoverage", 0.35))
+    if float(evidence_gate.get("topScore") or 0.0) < min_top_score:
+        evidence_gate["passed"] = False
+        evidence_gate["status"] = EVIDENCE_STATUS_INSUFFICIENT
+        evidence_gate["reason"] = f"top_score_below_policy:{min_top_score:.2f}"
+        evidence_gate.setdefault("warnings", []).append("Top retrieval score is below runtime ask policy threshold.")
+    if float(evidence_gate.get("coverage") or 0.0) < min_term_coverage:
+        evidence_gate["status"] = EVIDENCE_STATUS_PARTIAL if evidence_gate.get("passed") else EVIDENCE_STATUS_INSUFFICIENT
+        evidence_gate["reason"] = f"coverage_below_policy:{min_term_coverage:.2f}"
+        evidence_gate.setdefault("warnings", []).append("Query-term coverage is below runtime ask policy threshold.")
+    source_languages = _infer_source_languages(selected_candidates)
     top_chunks = [candidate for candidate in selected_candidates if candidate["type"] == "chunk"]
 
     source_map = {candidate["source"].id: candidate["source"] for candidate in selected_candidates if candidate.get("source")}
@@ -2488,6 +2674,18 @@ def ask(
     related_images = _collect_related_images(db, [(candidate["score"], candidate["chunk"], candidate["source"]) for candidate in top_chunks], limit=3)
 
     conflicts = _build_conflicts(reranked_candidates[: max(runtime.retrieval_limit * 3, 8)], interpreted)
+    answer_mode = ANSWER_MODE_ANSWER
+    evidence_status = EVIDENCE_STATUS_SUPPORTED
+    if not evidence_gate.get("passed"):
+        answer_mode = ANSWER_MODE_NO_ANSWER
+        evidence_status = EVIDENCE_STATUS_INSUFFICIENT
+    elif evidence_gate.get("status") == EVIDENCE_STATUS_PARTIAL:
+        answer_mode = ANSWER_MODE_PARTIAL
+        evidence_status = EVIDENCE_STATUS_PARTIAL
+    if answer_mode == ANSWER_MODE_PARTIAL and not bool(ask_policy.get("allowPartialAnswers", True)):
+        answer_mode = ANSWER_MODE_NO_ANSWER
+        evidence_status = EVIDENCE_STATUS_INSUFFICIENT
+
     if selected_candidates:
         uncertainty = None
         if scope_summary:
@@ -2512,16 +2710,25 @@ def ask(
         selected_candidates,
         interpreted,
         conflicts,
+        language=answer_language,
         suggested_prompts=suggested_prompts,
         uncertainty=uncertainty,
     )
     used_llm_answer = False
     answer_profile = runtime.profile_for_task("ask_answer")
-    if selected_candidates:
+    allow_general_fallback = bool(ask_policy.get("allowGeneralFallback", False))
+    if answer_mode != ANSWER_MODE_NO_ANSWER and selected_candidates:
+        source_language_hint = ", ".join(source_languages) if source_languages else "unknown"
         system_prompt = (
             "You are a grounded internal knowledge-base assistant. "
             "Use only provided evidence. "
+            f"Answer in language code `{answer_language}`. "
+            f"{'Respond strictly in Vietnamese. Do not switch to English unless quoting source text. ' if answer_language == 'vi' else ''}"
+            f"Answer mode: `{answer_mode}`. Evidence status: `{evidence_status}`. "
+            f"Source language(s): `{source_language_hint}`. "
             "Return concise markdown with sections: Direct Answer, Why, Evidence By Source, Conflicts / Caveats when needed, Uncertainty / Missing Evidence when needed, and Recommended Next Question when useful. "
+            "If answer mode is partial_answer, include a section named Unsupported Parts that clearly lists what cannot be answered from evidence. "
+            "When source language differs from answer language, translate only supported evidence and keep citations tied to original source text. "
             "If sources disagree, explain which source should be preferred and why using authority, approval, effective date, or version signals from the provided evidence. "
             "Do not invent facts or citations."
         )
@@ -2533,6 +2740,10 @@ def ask(
             f"Original question: {question}\n"
             f"Interpreted query: {standalone_query}\n"
             f"Intent: {interpreted['intent']}\n\n"
+            f"Answer language: {answer_language}\n"
+            f"Answer mode: {answer_mode}\n"
+            f"Evidence status: {evidence_status}\n"
+            f"Source languages: {source_language_hint}\n\n"
             f"Planner: {interpreted.get('planner')}\n\n"
             "Context:\n\n" + "\n\n---\n\n".join(context_blocks)
         )
@@ -2540,12 +2751,66 @@ def ask(
         if llm_answer:
             answer = llm_answer.strip()
             used_llm_answer = True
+    if answer_mode == ANSWER_MODE_NO_ANSWER and allow_general_fallback:
+        fallback_prompt = (
+            "You are providing non-official fallback guidance. "
+            f"Answer in language code `{answer_language}`. "
+            "State clearly this is general knowledge, not from internal knowledge base, and keep it short."
+        )
+        fallback_answer = llm_client.complete(
+            answer_profile,
+            fallback_prompt,
+            f"User question: {question}\nReturn a short helpful answer with a warning line.",
+        )
+        if fallback_answer:
+            answer_mode = ANSWER_MODE_GENERAL_FALLBACK
+            evidence_status = EVIDENCE_STATUS_UNSUPPORTED
+            answer = fallback_answer.strip()
+            uncertainty = "General fallback mode was used because grounded internal evidence was insufficient."
+    if answer_mode == ANSWER_MODE_NO_ANSWER:
+        answer = _no_answer_text(answer_language)
+        citations = []
+        related_pages = []
+        related_sources = []
+        conflicts = []
+    elif answer_mode == ANSWER_MODE_PARTIAL:
+        answer = f"{_partial_answer_prefix(answer_language)}\n\n{answer}"
+
     if related_images:
         answer = _append_related_illustrations(answer, related_images)
 
     answer_verification = verify_answer_support(standalone_query, answer, interpreted, selected_candidates, citations)
+    verifier_decision = str(answer_verification.get("finalDecision") or "").strip().lower()
+    verifier_risk = str(answer_verification.get("risk") or "").strip().lower()
+    if verifier_decision == ANSWER_MODE_NO_ANSWER:
+        answer_mode = ANSWER_MODE_NO_ANSWER
+        evidence_status = EVIDENCE_STATUS_UNSUPPORTED
+        answer = _no_answer_text(answer_language)
+        citations = []
+        related_pages = []
+        related_sources = []
+        conflicts = []
+    elif verifier_decision == ANSWER_MODE_PARTIAL:
+        answer_mode = ANSWER_MODE_PARTIAL
+        evidence_status = EVIDENCE_STATUS_PARTIAL
+    elif verifier_decision == ANSWER_MODE_ANSWER and answer_mode != ANSWER_MODE_NO_ANSWER:
+        answer_mode = ANSWER_MODE_ANSWER
+        evidence_status = EVIDENCE_STATUS_SUPPORTED
     if not answer_verification.get("supported") and selected_candidates:
+        if answer_mode == ANSWER_MODE_ANSWER:
+            answer_mode = ANSWER_MODE_PARTIAL
+            evidence_status = EVIDENCE_STATUS_PARTIAL
         uncertainty = uncertainty or "The answer is based on low-confidence evidence verification; inspect citations before using it."
+    if verifier_risk == "high":
+        uncertainty = uncertainty or "High verification risk: claims may exceed available evidence."
+    if answer_mode == ANSWER_MODE_PARTIAL and answer_language == "vi" and not answer.startswith("Toi chi tim thay"):
+        answer = f"{_partial_answer_prefix(answer_language)}\n\n{answer}"
+    answer = _normalize_answer_language(
+        answer,
+        answer_language,
+        source_languages,
+        used_llm_answer=used_llm_answer,
+    )
 
     confidence = round(min((selected_candidates[0]["score"] * 100) if selected_candidates else 45, 95), 2)
     response = {
@@ -2560,6 +2825,14 @@ def ask(
         "citations": citations,
         "relatedPages": related_pages,
         "relatedSources": related_sources,
+        "answerMode": answer_mode,
+        "answerLanguage": answer_language,
+        "sourceLanguages": source_languages,
+        "evidenceStatus": evidence_status,
+        "evidenceGate": {
+            **evidence_gate,
+            "citationCount": len(citations),
+        },
         "confidence": confidence,
         "isInference": not used_llm_answer,
         "uncertainty": uncertainty,
@@ -2596,16 +2869,24 @@ def ask(
             "selectedContext": context_pack,
             "contextCoverage": context_coverage,
             "answerVerification": answer_verification,
+            "evidenceGate": {
+                **evidence_gate,
+                "citationCount": len(citations),
+            },
             "answerGeneration": {
-                "mode": "llm" if used_llm_answer else "retrieval_fallback",
+                "mode": "llm" if used_llm_answer else ("retrieval_fallback" if answer_mode != ANSWER_MODE_NO_ANSWER else "no_answer_policy"),
                 "provider": answer_profile.provider if used_llm_answer else None,
                 "model": answer_profile.model if used_llm_answer else None,
                 "reason": (
                     "Answer was drafted by the configured ask_answer model using selected evidence."
                     if used_llm_answer
+                    else "Answer was blocked by no-answer policy due to insufficient evidence."
+                    if answer_mode == ANSWER_MODE_NO_ANSWER
                     else "Answer was generated from deterministic retrieval/evidence formatting because no model answer was used."
                 ),
             },
+            "queryVariants": query_variants,
+            "askPolicy": ask_policy,
         },
         "answeredAt": datetime.now(timezone.utc).isoformat(),
     }
