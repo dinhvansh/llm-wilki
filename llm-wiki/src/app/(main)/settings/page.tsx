@@ -3,18 +3,18 @@ import { useEffect, useState } from 'react'
 import { PageHeader } from '@/components/layout/page-header'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { ErrorState } from '@/components/data-display/error-state'
-import { useSettings, useTestSettingsConnection, useUpdateSettings } from '@/hooks/use-settings'
-import type { AIModelProfile, AITaskKey, RuntimeConnectionTestResult, RuntimeSettings } from '@/lib/types'
-import { ChevronDown, Clock3, SlidersHorizontal } from 'lucide-react'
+import { useLoadSettingsModels, useSettings, useTestSettingsConnection, useUpdateSettings } from '@/hooks/use-settings'
+import type { AIModelProfile, AITaskKey, RuntimeConnectionTestResult, RuntimeModelListResult, RuntimeSettings } from '@/lib/types'
+import { ChevronDown, Clock3, ListRestart, SlidersHorizontal } from 'lucide-react'
 
-const PROVIDERS = ['none', 'ollama', 'openai', 'anthropic', 'openai_compatible']
+const PROVIDERS = ['none', 'ollama', 'openai', 'gemini', 'anthropic', 'openai_compatible']
 const DEFAULT_BASE_URL = 'http://host.docker.internal:11434'
 
 const TASK_CONFIG: Array<{ key: AITaskKey; title: string; description: string; defaultBaseUrl?: string }> = [
   { key: 'ingest_summary', title: 'Ingest Summary', description: 'Tom tat va key facts trong qua trinh ingest.', defaultBaseUrl: DEFAULT_BASE_URL },
   { key: 'claim_extraction', title: 'Claim Extraction', description: 'Task semantic cho claim/knowledge extraction ve sau.', defaultBaseUrl: DEFAULT_BASE_URL },
   { key: 'entity_glossary_timeline', title: 'Entity / Glossary / Timeline', description: 'Task trich thuc the, glossary, timeline.', defaultBaseUrl: DEFAULT_BASE_URL },
-  { key: 'bpm_generation', title: 'BPM Generation', description: 'Task sinh BPM flow tu page/source.', defaultBaseUrl: DEFAULT_BASE_URL },
+  { key: 'bpm_generation', title: 'BPM / OpenFlowKit Flowpilot', description: 'Provider rieng de sinh BPM FlowDocument tu page/source theo prompt OpenFlowKit.', defaultBaseUrl: DEFAULT_BASE_URL },
   { key: 'ask_answer', title: 'Ask AI', description: 'Task tra loi grounded cho nguoi dung.', defaultBaseUrl: DEFAULT_BASE_URL },
   { key: 'review_assist', title: 'Review Assist', description: 'Task goi y review/lint/quick-fix ve sau.', defaultBaseUrl: DEFAULT_BASE_URL },
   { key: 'embeddings', title: 'Embeddings', description: 'Task embeddings cho retrieval va indexing.', defaultBaseUrl: '' },
@@ -128,9 +128,12 @@ export default function SettingsPage() {
   const { data, isLoading, isError, error, refetch } = useSettings()
   const updateMutation = useUpdateSettings()
   const testConnectionMutation = useTestSettingsConnection()
+  const loadModelsMutation = useLoadSettingsModels()
   const [form, setForm] = useState<Omit<RuntimeSettings, 'updatedAt'>>(EMPTY_FORM)
   const [taskTestResults, setTaskTestResults] = useState<Partial<Record<AITaskKey, RuntimeConnectionTestResult>>>({})
-  const [expandedTask, setExpandedTask] = useState<AITaskKey | null>(null)
+  const [taskModelResults, setTaskModelResults] = useState<Partial<Record<AITaskKey, RuntimeModelListResult>>>({})
+  const [taskModelOptions, setTaskModelOptions] = useState<Partial<Record<AITaskKey, string[]>>>({})
+  const [expandedTask, setExpandedTask] = useState<AITaskKey | null>('bpm_generation')
 
   useEffect(() => {
     if (!data) return
@@ -212,6 +215,35 @@ export default function SettingsPage() {
     }
   }
 
+  const loadModels = async (task: AITaskKey) => {
+    const profile = form.aiTaskProfiles[task]
+    try {
+      const result = await loadModelsMutation.mutateAsync({
+        provider: profile.provider,
+        apiKey: profile.apiKey,
+        baseUrl: profile.baseUrl,
+        timeoutSeconds: Number(profile.timeoutSeconds),
+      })
+      setTaskModelResults(prev => ({ ...prev, [task]: result }))
+      if (result.success) {
+        setTaskModelOptions(prev => ({ ...prev, [task]: result.models }))
+        if (!profile.model && result.models[0]) {
+          updateTaskProfile(task, 'model', result.models[0])
+        }
+      }
+    } catch (mutationError) {
+      setTaskModelResults(prev => ({
+        ...prev,
+        [task]: {
+          success: false,
+          provider: profile.provider,
+          models: [],
+          message: (mutationError as Error).message || 'Could not load models.',
+        },
+      }))
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -232,13 +264,16 @@ export default function SettingsPage() {
       <form id="settings-form" onSubmit={onSubmit} className="space-y-5 p-6">
         <Section
           title="Task-Scoped AI Profiles"
-          description="Model selection is separated by business task so Ask AI, BPM generation, extraction, and embeddings can evolve independently."
+          description="Model selection is separated by business task. BPM/OpenFlowKit has its own provider so process generation can use a stronger diagram-capable model without changing Ask AI or ingest."
         >
           <div className="md:col-span-2 grid gap-5">
             {TASK_CONFIG.map(task => {
               const profile = form.aiTaskProfiles[task.key]
               const result = taskTestResults[task.key]
+              const modelResult = taskModelResults[task.key]
+              const modelOptions = taskModelOptions[task.key] ?? []
               const isTesting = testConnectionMutation.isPending && testConnectionMutation.variables?.purpose === task.key
+              const isLoadingModels = loadModelsMutation.isPending && loadModelsMutation.variables?.provider === profile.provider
               const isExpanded = expandedTask === task.key
               return (
                 <div key={task.key} className="overflow-hidden rounded-xl border border-border bg-background">
@@ -277,10 +312,31 @@ export default function SettingsPage() {
                           </SelectInput>
                         </Field>
                         <Field label="Model">
-                          <TextInput value={profile.model} onChange={e => updateTaskProfile(task.key, 'model', e.target.value)} placeholder={task.key === 'embeddings' ? 'nomic-embed-text' : 'gemma3:4b'} />
+                          <div className="flex gap-2">
+                            {modelOptions.length > 0 ? (
+                              <SelectInput value={profile.model} onChange={e => updateTaskProfile(task.key, 'model', e.target.value)}>
+                                {!profile.model && <option value="">Select a model</option>}
+                                {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                              </SelectInput>
+                            ) : (
+                              <TextInput value={profile.model} onChange={e => updateTaskProfile(task.key, 'model', e.target.value)} placeholder={task.key === 'embeddings' ? 'nomic-embed-text' : 'gemini-2.5-flash'} />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => loadModels(task.key)}
+                              disabled={loadModelsMutation.isPending || profile.provider === 'none'}
+                              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-accent disabled:opacity-50"
+                            >
+                              <ListRestart className="h-4 w-4" />
+                              {isLoadingModels ? 'Loading...' : 'Load models'}
+                            </button>
+                          </div>
                         </Field>
-                        <Field label="API Key">
-                          <TextInput value={profile.apiKey} onChange={e => updateTaskProfile(task.key, 'apiKey', e.target.value)} placeholder="optional" type="password" />
+                        <Field
+                          label="API Key"
+                          hint={profile.hasApiKey && !profile.apiKey ? 'A key is already saved. Leave blank to keep it, or enter a new key to replace it.' : 'Leave blank if this provider does not need a key.'}
+                        >
+                          <TextInput value={profile.apiKey} onChange={e => updateTaskProfile(task.key, 'apiKey', e.target.value)} placeholder={profile.hasApiKey ? 'Saved key will be kept' : 'optional'} type="password" />
                         </Field>
                         <Field label="Base URL" hint="For Ollama in Docker use http://host.docker.internal:11434.">
                           <TextInput value={profile.baseUrl} onChange={e => updateTaskProfile(task.key, 'baseUrl', e.target.value)} placeholder={task.defaultBaseUrl ?? ''} />
@@ -303,6 +359,12 @@ export default function SettingsPage() {
                         <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${result.success ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
                           {result.message}
                           {typeof result.latencyMs === 'number' ? ` (${result.latencyMs} ms)` : ''}
+                        </div>
+                      )}
+                      {modelResult && (
+                        <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${modelResult.success ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                          {modelResult.message}
+                          {typeof modelResult.latencyMs === 'number' ? ` (${modelResult.latencyMs} ms)` : ''}
                         </div>
                       )}
                     </div>

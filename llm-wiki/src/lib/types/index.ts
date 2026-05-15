@@ -931,6 +931,12 @@ export interface AskDiagnostics {
     missingEvidenceRisk: 'low' | 'medium' | 'high' | string
     notes: string[]
   } | null
+  answerGeneration?: {
+    mode: 'llm' | 'retrieval_fallback' | string
+    provider?: string | null
+    model?: string | null
+    reason?: string | null
+  } | null
 }
 
 export interface AskScope {
@@ -1040,6 +1046,14 @@ export interface RuntimeConnectionTestResult {
   latencyMs?: number
 }
 
+export interface RuntimeModelListResult {
+  success: boolean
+  provider: string
+  models: string[]
+  message: string
+  latencyMs?: number
+}
+
 export type AITaskKey =
   | 'ingest_summary'
   | 'claim_extraction'
@@ -1053,6 +1067,7 @@ export interface AIModelProfile {
   provider: string
   model: string
   apiKey: string
+  hasApiKey?: boolean
   baseUrl: string
   timeoutSeconds: number
 }

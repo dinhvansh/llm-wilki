@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     JOB_WORKER_POLL_SECONDS: float = 2.0
     JOB_MAX_ATTEMPTS: int = 3
     SECRET_KEY: str = "changeme-in-production"
+    RUNTIME_SECRET_ENCRYPTION_KEY: str = ""
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     DEBUG: bool = True

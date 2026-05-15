@@ -5,6 +5,7 @@ class AIModelProfilePayload(BaseModel):
     provider: str = "none"
     model: str = ""
     apiKey: str = ""
+    hasApiKey: bool = False
     baseUrl: str = ""
     timeoutSeconds: int = Field(default=90, ge=5, le=600)
 
@@ -64,5 +65,20 @@ class TestConnectionResponse(BaseModel):
     provider: str
     model: str
     purpose: str
+    message: str
+    latencyMs: int | None = None
+
+
+class ModelListPayload(BaseModel):
+    provider: str = "none"
+    apiKey: str = ""
+    baseUrl: str = ""
+    timeoutSeconds: int = Field(default=90, ge=5, le=600)
+
+
+class ModelListResponse(BaseModel):
+    success: bool
+    provider: str
+    models: list[str] = Field(default_factory=list)
     message: str
     latencyMs: int | None = None

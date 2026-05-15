@@ -16,6 +16,8 @@ def validate_startup_config() -> dict:
         errors.append("REDIS_URL is required when JOB_QUEUE_BACKEND=redis")
     if not settings.DEBUG and settings.SECRET_KEY == "changeme-in-production":
         errors.append("SECRET_KEY must be changed when DEBUG=false")
+    if not settings.DEBUG and not settings.RUNTIME_SECRET_ENCRYPTION_KEY:
+        warnings.append("RUNTIME_SECRET_ENCRYPTION_KEY should be set when DEBUG=false")
     if settings.LLM_PROVIDER != "none" and not settings.LLM_MODEL:
         warnings.append("LLM_PROVIDER is enabled but LLM_MODEL is empty")
     return {"ok": not errors, "warnings": warnings, "errors": errors}

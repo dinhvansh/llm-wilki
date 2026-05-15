@@ -44,6 +44,7 @@ def init_database(db: Session, seed_demo_data: bool = True) -> None:
     _ensure_page_content_json_column()
     _ensure_diagram_flow_document_columns()
     _ensure_entity_management_columns()
+    _ensure_runtime_secret_columns()
     _backfill_page_content_json(db)
     _backfill_diagram_flow_documents(db)
     _backfill_entity_management_fields(db)
@@ -133,6 +134,24 @@ def _ensure_entity_management_columns() -> None:
         statements.append(f"ALTER TABLE entities ADD COLUMN updated_at {datetime_sql}")
     if "metadata_json" not in columns:
         statements.append(f"ALTER TABLE entities ADD COLUMN metadata_json {json_sql}")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _ensure_runtime_secret_columns() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    inspector = inspect(engine)
+    columns = {column["name"]: column for column in inspector.get_columns("runtime_config")}
+    secret_columns = ("answer_api_key", "ingest_api_key", "embedding_api_key")
+    statements = []
+    for column_name in secret_columns:
+        column_type = str(columns.get(column_name, {}).get("type", "")).lower()
+        if "text" not in column_type:
+            statements.append(f"ALTER TABLE runtime_config ALTER COLUMN {column_name} TYPE TEXT")
     if not statements:
         return
     with engine.begin() as connection:

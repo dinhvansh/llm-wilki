@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.core.identity import require_permission
 from app.services.auth import Actor
-from app.schemas.settings import SettingsPayload, SettingsResponse, TestConnectionPayload, TestConnectionResponse
-from app.services.settings import serialize_runtime_settings, test_runtime_connection, update_runtime_settings
+from app.schemas.settings import ModelListPayload, ModelListResponse, SettingsPayload, SettingsResponse, TestConnectionPayload, TestConnectionResponse
+from app.services.settings import list_runtime_models, serialize_runtime_settings, test_runtime_connection, update_runtime_settings
 
 router = APIRouter()
 
@@ -23,3 +23,8 @@ async def save_settings(payload: SettingsPayload, db: Session = Depends(get_db),
 @router.post("/settings/test", response_model=TestConnectionResponse)
 async def test_settings_connection(payload: TestConnectionPayload, actor: Actor = Depends(require_permission("settings:write"))):
     return test_runtime_connection(payload.model_dump())
+
+
+@router.post("/settings/models", response_model=ModelListResponse)
+async def list_settings_models(payload: ModelListPayload, actor: Actor = Depends(require_permission("settings:write"))):
+    return list_runtime_models(payload.model_dump())

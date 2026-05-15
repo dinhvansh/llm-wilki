@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import settings
 from app.db.database import SessionLocal
 from app.models import RuntimeConfig
+from app.core.secrets import decrypt_secret, decrypt_task_profiles, encrypt_secret, encrypt_task_profiles
 
 
 AI_TASK_KEYS = (
@@ -64,7 +65,7 @@ def _profile_from_record(*, provider: str, model: str, api_key: str, base_url: s
     return LLMProfile(
         provider=provider or "none",
         model=model or "",
-        api_key=api_key or "",
+        api_key=decrypt_secret(api_key),
         base_url=base_url or "",
         timeout_seconds=timeout_seconds or settings.LLM_TIMEOUT_SECONDS,
     )
@@ -108,7 +109,7 @@ def normalize_task_profiles(
         normalized[task] = LLMProfile(
             provider=str(raw.get("provider", fallback.provider) or "none").strip() or "none",
             model=str(raw.get("model", fallback.model) or "").strip(),
-            api_key=str(raw.get("apiKey", raw.get("api_key", fallback.api_key)) or "").strip(),
+            api_key=decrypt_secret(raw.get("apiKey", raw.get("api_key", fallback.api_key))),
             base_url=str(raw.get("baseUrl", raw.get("base_url", fallback.base_url)) or "").strip(),
             timeout_seconds=int(raw.get("timeoutSeconds", raw.get("timeout_seconds", fallback.timeout_seconds)) or fallback.timeout_seconds),
         )
@@ -189,19 +190,19 @@ def ensure_runtime_config(db: Session) -> RuntimeConfig:
         id=RUNTIME_CONFIG_ID,
         answer_provider=ask_profile.provider,
         answer_model=ask_profile.model,
-        answer_api_key=ask_profile.api_key,
+        answer_api_key=encrypt_secret(ask_profile.api_key),
         answer_base_url=ask_profile.base_url,
         answer_timeout_seconds=ask_profile.timeout_seconds,
         ingest_provider=ingest_profile.provider,
         ingest_model=ingest_profile.model,
-        ingest_api_key=ingest_profile.api_key,
+        ingest_api_key=encrypt_secret(ingest_profile.api_key),
         ingest_base_url=ingest_profile.base_url,
         ingest_timeout_seconds=ingest_profile.timeout_seconds,
         embedding_provider=embedding_profile.provider,
         embedding_model=embedding_profile.model,
-        embedding_api_key=embedding_profile.api_key,
+        embedding_api_key=encrypt_secret(embedding_profile.api_key),
         embedding_base_url=embedding_profile.base_url,
-        ai_task_profiles=serialize_task_profiles(snapshot.ai_task_profiles),
+        ai_task_profiles=encrypt_task_profiles(serialize_task_profiles(snapshot.ai_task_profiles)),
         chunk_mode=snapshot.chunk_mode,
         chunk_size_words=snapshot.chunk_size_words,
         chunk_overlap_words=snapshot.chunk_overlap_words,
@@ -242,7 +243,7 @@ def runtime_snapshot_from_record(record: RuntimeConfig) -> RuntimeConfigSnapshot
         timeout_seconds=90,
     )
     task_profiles = normalize_task_profiles(
-        getattr(record, "ai_task_profiles", {}) or {},
+        decrypt_task_profiles(getattr(record, "ai_task_profiles", {}) or {}),
         answer_profile=answer_profile,
         ingest_profile=ingest_profile,
         embedding_profile=embedding_profile,

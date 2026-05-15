@@ -33,3 +33,14 @@ export function useTestSettingsConnection() {
     }) => settingsService.testConnection(payload),
   })
 }
+
+export function useLoadSettingsModels() {
+  return useMutation({
+    mutationFn: (payload: {
+      provider: string
+      apiKey: string
+      baseUrl: string
+      timeoutSeconds: number
+    }) => settingsService.loadModels(payload),
+  })
+}

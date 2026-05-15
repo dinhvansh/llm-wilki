@@ -157,6 +157,8 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
   const artifactCitations = response.citations.filter(citation => Boolean(citation.artifactType))
   const textCitations = response.citations.filter(citation => !citation.artifactType)
   const verification = response.diagnostics?.answerVerification
+  const generation = response.diagnostics?.answerGeneration
+  const usedAiModel = generation?.mode === 'llm'
 
   const renderCitationCard = (cit: AskResponse['citations'][number]) => (
     <EvidenceCard
@@ -305,6 +307,18 @@ function AnswerDisplay({ response }: { response: AskResponse }) {
       {/* Confidence */}
       <div className="flex items-center gap-3">
         <ConfidenceBar score={response.confidence} />
+        <span
+          className={`rounded border px-2 py-0.5 text-xs ${
+            usedAiModel
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-slate-200 bg-slate-50 text-slate-600'
+          }`}
+          title={generation?.reason ?? undefined}
+        >
+          {usedAiModel
+            ? `AI model: ${generation?.provider ?? 'provider'}/${generation?.model ?? 'model'}`
+            : 'Retrieval fallback'}
+        </span>
         {response.isInference && (
           <span className="text-xs text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded border border-yellow-200">
             Contains inference

@@ -2516,8 +2516,8 @@ def ask(
         uncertainty=uncertainty,
     )
     used_llm_answer = False
+    answer_profile = runtime.profile_for_task("ask_answer")
     if selected_candidates:
-        answer_profile = runtime.profile_for_task("ask_answer")
         system_prompt = (
             "You are a grounded internal knowledge-base assistant. "
             "Use only provided evidence. "
@@ -2596,6 +2596,16 @@ def ask(
             "selectedContext": context_pack,
             "contextCoverage": context_coverage,
             "answerVerification": answer_verification,
+            "answerGeneration": {
+                "mode": "llm" if used_llm_answer else "retrieval_fallback",
+                "provider": answer_profile.provider if used_llm_answer else None,
+                "model": answer_profile.model if used_llm_answer else None,
+                "reason": (
+                    "Answer was drafted by the configured ask_answer model using selected evidence."
+                    if used_llm_answer
+                    else "Answer was generated from deterministic retrieval/evidence formatting because no model answer was used."
+                ),
+            },
         },
         "answeredAt": datetime.now(timezone.utc).isoformat(),
     }

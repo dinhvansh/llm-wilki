@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from typing import Iterable
 
 import httpx
@@ -44,6 +45,25 @@ class LLMClient:
                 )
                 parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
                 return "\n".join(parts).strip() or None
+
+            if profile.provider == "gemini":
+                if not profile.api_key:
+                    return None
+                model = re.sub(r"^models/", "", profile.model.strip())
+                with httpx.Client(timeout=profile.timeout_seconds) as client:
+                    response = client.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                        params={"key": profile.api_key},
+                        json={
+                            "systemInstruction": {"parts": [{"text": system_prompt}]},
+                            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                            "generationConfig": {"temperature": 0.1},
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    parts = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    return "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip() or None
 
             if profile.provider == "openai_compatible":
                 headers = {"Content-Type": "application/json"}

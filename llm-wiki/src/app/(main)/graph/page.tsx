@@ -511,7 +511,7 @@ export default function KnowledgeGraphPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col overflow-hidden">
       <PageHeader
         title="Knowledge Graph"
         description={`${data.meta?.nodeCount ?? data.nodes.length} nodes · ${data.meta?.edgeCount ?? data.edges.length} edges`}
@@ -661,8 +661,8 @@ export default function KnowledgeGraphPage() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="relative flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="relative min-h-0 flex-1">
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -707,7 +707,7 @@ export default function KnowledgeGraphPage() {
           </div>
         </div>
 
-        <aside className="w-80 shrink-0 border-l border-border bg-card/60 p-4">
+        <aside className="w-80 shrink-0 overflow-y-auto border-l border-border bg-card/60 p-4">
           {!detail ? (
             <EmptyState icon="database" title="No node selected" description="Click a node to inspect graph details, metrics, and local neighborhood." />
           ) : (

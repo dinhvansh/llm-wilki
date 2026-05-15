@@ -1,7 +1,7 @@
 import type {
   Source, SourceChunk, SourceSuggestion, Page, PageVersion, Diagram, DiagramVersion, AuditLog, ReviewItem, Job,
   DashboardStats, GraphData, AskResponse, ChatSession, ChatSessionDetail, SearchResult,
-  PaginatedResponse, Entity, EntityDetail, Claim, RuntimeConnectionTestResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
+  PaginatedResponse, Entity, EntityDetail, Claim, RuntimeConnectionTestResult, RuntimeModelListResult, RuntimeSettings, ExplorerEntity, TimelineEvent, GlossaryTerm, LintResponse, Collection,
   KnowledgeUnit, ExtractionRun, SourceArtifact, SkillPackage, SkillTestResult, ManagedUser, Department, AdminRole, Note, FlowDocument
 } from '@/lib/types'
 import type { PageBlock } from '@/lib/page-blocks'
@@ -245,4 +245,10 @@ export interface ISettingsService {
     timeoutSeconds: number
     purpose: string
   }): Promise<RuntimeConnectionTestResult>
+  loadModels(payload: {
+    provider: string
+    apiKey: string
+    baseUrl: string
+    timeoutSeconds: number
+  }): Promise<RuntimeModelListResult>
 }
