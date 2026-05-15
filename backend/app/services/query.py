@@ -186,7 +186,8 @@ def _query_terms(value: str) -> list[str]:
 QUERY_STOPWORDS = {
     "what", "which", "when", "where", "how", "why", "for", "with", "this", "that", "about",
     "required", "should", "would", "could", "into", "from", "before", "after", "the", "and",
-    "cai", "nao", "gi", "la", "cho", "voi", "hay", "can", "nen", "nhung",
+    "tell", "most", "important", "summarize", "summary",
+    "cai", "nao", "gi", "la", "cho", "voi", "hay", "can", "nen", "nhung", "tom", "tat",
 }
 
 
@@ -238,6 +239,33 @@ def _infer_source_languages(selected_candidates: list[dict]) -> list[str]:
             seen.add(language)
             languages.append(language)
     return languages or ["unknown"]
+
+
+def _candidate_collection_id(candidate: dict) -> str | None:
+    source = candidate.get("source")
+    page = candidate.get("page")
+    note = candidate.get("note")
+    if source is not None:
+        return getattr(source, "collection_id", None)
+    if page is not None:
+        return getattr(page, "collection_id", None)
+    if note is not None:
+        return getattr(note, "collection_id", None)
+    return None
+
+
+def _enforce_candidate_permissions(candidates: list[dict], actor) -> tuple[list[dict], int]:
+    if actor is None:
+        return candidates, 0
+    allowed: list[dict] = []
+    blocked = 0
+    for candidate in candidates:
+        collection_id = _candidate_collection_id(candidate)
+        if can_access_collection_id(actor, collection_id):
+            allowed.append(candidate)
+        else:
+            blocked += 1
+    return allowed, blocked
 
 
 def _no_answer_text(language: str) -> str:
@@ -2582,8 +2610,11 @@ def ask(
     primary_variant_query = str(query_variants[0]["query"] if query_variants else standalone_query)
     query_embedding = _embed_query(runtime, primary_variant_query)
     candidates = _retrieve_candidates(db, runtime, interpreted, query_embedding, query_variants=query_variants, actor=actor)
+    candidates, blocked_candidate_count = _enforce_candidate_permissions(candidates, actor)
     reranked_candidates = _rerank_candidates(candidates, interpreted, limit=max(runtime.retrieval_limit * 3, 12))
+    reranked_candidates, blocked_reranked_count = _enforce_candidate_permissions(reranked_candidates, actor)
     selected_candidates, context_pack, context_coverage = _build_context_pack(reranked_candidates, interpreted, runtime.retrieval_limit)
+    selected_candidates, blocked_selected_count = _enforce_candidate_permissions(selected_candidates, actor)
     if scope_summary and selected_candidates and not _has_grounded_scope_match(selected_candidates):
         selected_candidates = []
         context_pack = []
@@ -2648,6 +2679,7 @@ def ask(
         if (candidate["type"], candidate["id"]) not in {(item["type"], item["id"]) for item in selected_candidates}
     ]
     citation_candidates = select_citation_candidates(standalone_query, interpreted, citation_pool)
+    citation_candidates, blocked_citation_count = _enforce_candidate_permissions(citation_candidates, actor)
     citations: list[dict] = []
     for index, candidate in enumerate(citation_candidates, start=1):
         payload = _build_candidate_citation(index, candidate, standalone_query)
@@ -2840,6 +2872,10 @@ def ask(
         "retrievalDebugId": f"dbg-{uuid4().hex[:8]}",
         "diagnostics": {
             "candidateCount": len(candidates),
+            "blockedCandidateCount": blocked_candidate_count,
+            "blockedRerankedCount": blocked_reranked_count,
+            "blockedSelectedCount": blocked_selected_count,
+            "blockedCitationCount": blocked_citation_count,
             "retrievalLimit": runtime.retrieval_limit,
             "searchResultLimit": runtime.search_result_limit,
             "clarificationTriggered": False,
