@@ -208,6 +208,32 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 
 ![AI-native Wiki Platform Architecture](docs/images/architecture-overview.png)
 
+## System Snapshots
+
+### Home
+
+![Home](docs/images/system-snapshots/home.png)
+
+### Sources
+
+![Sources](docs/images/system-snapshots/sources.png)
+
+### Ask AI
+
+![Ask AI](docs/images/system-snapshots/ask.png)
+
+### Review Queue
+
+![Review Queue](docs/images/system-snapshots/review.png)
+
+### Settings
+
+![Settings](docs/images/system-snapshots/settings.png)
+
+### Knowledge Graph
+
+![Knowledge Graph](docs/images/system-snapshots/graph.png)
+
 ## 11) Future Roadmap
 
 ### Phase A - Retrieval and Answer Quality
