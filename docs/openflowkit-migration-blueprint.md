@@ -6,6 +6,14 @@ The diagrams module will move to one engine only: an OpenFlowKit-style flow engi
 
 `drawioXml` stops being the runtime source of truth. Existing draw.io data is kept only for one-time migration and compatibility inspection during the transition. After migration, the app reads and writes an OpenFlow document model.
 
+Implementation update:
+
+- OpenFlowKit is self-hosted as a separate editor app under `openflowkit/`.
+- The wiki frontend embeds OpenFlowKit through an iframe.
+- A small `postMessage` bridge loads `flowDocument` into OpenFlowKit and returns edited `flowDocument` on save.
+- The wiki backend remains the source of truth for storage, versions, review, permissions, source links, citations, and AI context.
+- OpenFlowKit browser/local storage is editor runtime state only, not the durable product state.
+
 ## Why Change
 
 The current module is split between two ideas:

@@ -1,0 +1,44 @@
+{
+  "id": "bpm-flow-designer",
+  "name": "BPM Flow Designer",
+  "version": "0.1.0",
+  "scope": "workspace",
+  "status": "ready",
+  "summary": "Generate traceable OpenFlowKit BPM drafts from wiki pages, sources, SOPs, policies, and process descriptions.",
+  "description": "Use this skill when AI must create or revise a BPM/process flow for the wiki's Process Diagrams module. It produces OpenFlowKit-compatible FlowDocument JSON with ordered layout, actor ownership, citations, and open questions.",
+  "instructions": "Create concise, reviewable BPM drafts that can be opened in OpenFlowKit without manual cleanup.\n\nWorkflow:\n1. Identify the process trigger, final outcome, actors, systems, approvals, handoffs, exceptions, and source evidence.\n2. Separate facts from gaps. Do not invent approvals, exception handling, SLAs, or actors; put missing logic in metadata.openQuestions.\n3. Build the happy path first, then attach decision branches and exception paths.\n4. Keep the layout left-to-right for business processes. Use one start node, explicit end nodes, and labeled decision branches.\n5. Preserve source traceability with citations on metadata and, when available, node data.citation or data.sourceRef.\n\nOutput contract:\n- Prefer OpenFlowKit FlowDocument JSON when the caller asks for an editable diagram.\n- Required top-level keys: version, engine, family, pages, metadata.\n- Use engine=openflowkit and family=flowchart.\n- pages[0] must include id, name, lanes, nodes, edges, groups, viewport.\n- Every node must include id, type, label, owner, position, and size.\n- Every edge must include id, source, target, type, and optional label.\n\nNode rules:\n- Use stable kebab-case or snake_case IDs.\n- Use node types start, task, decision, handoff, subprocess, and end.\n- Labels should be short action phrases; decisions should read as questions.\n- Every task, decision, and handoff should have an owner.\n\nEdge rules:\n- Decision nodes must have at least two outgoing labeled edges such as Approve/Reject, Yes/No, or Pass/Fail.\n- Connect exception paths to a rejection, rework, or end node instead of leaving them floating.\n\nLayout rules:\n- Use left-to-right grid.\n- Start around x=80, y=120.\n- Increase x by about 280 for each process step.\n- Put actors or branch lanes on separate y bands, spaced by about 160.\n- Put exception/reject paths below the happy path.\n- Avoid crossing edges by merging branches only after branch tasks.\n\nQuality bar:\n- The first node is a start node and every normal path reaches an end node.\n- Every task has an owner.\n- Every decision has labeled outgoing branches.\n- Node order matches the source procedure order.\n- Unsupported assumptions are listed as open questions.\n- Citations remain attached to metadata and, where possible, node data.",
+  "capabilities": [
+    "Generate OpenFlowKit FlowDocument JSON",
+    "Create ordered left-to-right BPM layouts",
+    "Extract actors, tasks, decisions, handoffs, and exception paths",
+    "Preserve page/source citations and open questions"
+  ],
+  "tags": [
+    "bpm",
+    "openflowkit",
+    "flowpilot",
+    "process-diagram"
+  ],
+  "entryPoints": [
+    "Generate BPM draft from page",
+    "Generate BPM draft from source",
+    "Revise Process Diagram flow"
+  ],
+  "owner": "System",
+  "reviewStatus": "released",
+  "reviewHistory": [
+    {
+      "id": "skill-review-bootstrap-bpm-flow-designer",
+      "type": "release",
+      "actor": "System",
+      "comment": "Bootstrapped from OpenFlowKit BPM Flow Designer skill.",
+      "createdAt": "2026-05-14T00:00:00+00:00"
+    }
+  ],
+  "metadataJson": {
+    "taskProfile": "bpm_generation",
+    "sourceSkillPath": "openflowkit/skills/bpm-flow-designer/SKILL.md",
+    "outputEngine": "openflowkit",
+    "outputFamily": "flowchart"
+  }
+}

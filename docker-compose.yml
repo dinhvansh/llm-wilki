@@ -9,7 +9,9 @@ services:
       args:
         NEXT_PUBLIC_USE_REAL_API: "true"
         NEXT_PUBLIC_API_BASE_URL: /backend-api
+        NEXT_PUBLIC_OPENFLOWKIT_URL: /openflowkit/#/home
         API_PROXY_TARGET: http://backend:8000/api
+        OPENFLOWKIT_PROXY_TARGET: http://openflowkit:3045
     container_name: llm-wiki-frontend
     ports:
       - "3100:3000"
@@ -17,9 +19,13 @@ services:
       - NODE_ENV=production
       - NEXT_PUBLIC_USE_REAL_API=true
       - NEXT_PUBLIC_API_BASE_URL=/backend-api
+      - NEXT_PUBLIC_OPENFLOWKIT_URL=/openflowkit/#/home
       - API_PROXY_TARGET=http://backend:8000/api
+      - OPENFLOWKIT_PROXY_TARGET=http://openflowkit:3045
     depends_on:
       backend:
+        condition: service_healthy
+      openflowkit:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -28,6 +34,44 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  openflowkit:
+    build:
+      context: ./openflowkit
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /openflowkit/
+        VITE_SIGNALING_SERVER: ${OPENFLOWKIT_SIGNALING_URL:-ws://localhost:31234}
+    container_name: llm-wiki-openflowkit
+    ports:
+      - "3045:3045"
+    depends_on:
+      openflowkit-signaling:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3045/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  openflowkit-signaling:
+    build:
+      context: ./openflowkit/signaling-server
+      dockerfile: Dockerfile
+    container_name: llm-wiki-openflowkit-signaling
+    environment:
+      - PORT=1234
+    ports:
+      - "31234:1234"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1234/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   backend:
     build:

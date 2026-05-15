@@ -1,0 +1,5 @@
+interface:
+  display_name: "Roadmap Safety Execution"
+  short_description: "One-by-one roadmap delivery with explicit gates and rollback."
+  default_prompt: "Use $roadmap-safety-execution to break this plan into small reversible change-sets and execute the first one safely."
+

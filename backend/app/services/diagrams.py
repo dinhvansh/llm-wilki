@@ -12,6 +12,7 @@ from app.core.llm_client import llm_client
 from app.core.runtime_config import load_runtime_snapshot
 from app.models import Claim, Diagram, DiagramVersion, Page, PageSourceLink, Source, SourceChunk
 from app.services.audit import create_audit_log, list_audit_logs
+from app.services.skills import get_skill_package
 
 
 def _iso(value):
@@ -135,6 +136,37 @@ def _normalize_owner(label: str) -> str:
 
 def _node_id(prefix: str, index: int) -> str:
     return f"{prefix}-{index + 1}"
+
+
+OPENFLOWKIT_FLOWPILOT_BPM_RULES = (
+    "Flowpilot/OpenFlowKit generation rules: output only machine-readable diagram content; "
+    "be implementation-aware and action-oriented; define all nodes before edges; "
+    "use stable readable node ids; preserve source order; use one start node and explicit end nodes; "
+    "use task nodes for actions, decision nodes for branching questions, and handoff nodes when ownership changes; "
+    "decisions must have exactly two or more labeled outgoing branches; "
+    "use left-to-right layout for business processes, with exception/reject branches below the happy path; "
+    "do not emit prose, markdown fences, or explanatory text in the response."
+)
+
+
+def _bpm_skill_instructions() -> str:
+    skill = get_skill_package("bpm-flow-designer")
+    if not skill:
+        return OPENFLOWKIT_FLOWPILOT_BPM_RULES
+    instructions = str(skill.get("instructions") or "").strip()
+    if instructions:
+        return f"{OPENFLOWKIT_FLOWPILOT_BPM_RULES}\n\nPROJECT BPM SKILL:\n{instructions}"
+    summary = str(skill.get("summary") or "").strip()
+    description = str(skill.get("description") or "").strip()
+    capabilities = skill.get("capabilities") if isinstance(skill.get("capabilities"), list) else []
+    lines = [OPENFLOWKIT_FLOWPILOT_BPM_RULES]
+    if summary:
+        lines.append(summary)
+    if description:
+        lines.append(description)
+    if capabilities:
+        lines.append("Capabilities: " + "; ".join(str(item) for item in capabilities if str(item).strip()))
+    return "\n".join(lines)
 
 
 def _actor_id(label: str) -> str:
@@ -263,12 +295,16 @@ def _build_llm_generation(*, title: str, objective: str, text: str, owner: str |
     if not llm_client.is_enabled(bpm_profile):
         return None
 
+    bpm_skill = _bpm_skill_instructions()
     system_prompt = (
         "You convert internal business documents into BPM draft JSON. "
         "Return strict JSON only. "
+        f"{bpm_skill} "
         "Do not invent actors, decisions, or exception paths when the document is ambiguous. "
         "Use openQuestions for missing or ambiguous business logic. "
-        "Output keys: scopeSummary, actors, steps, decisions, exceptionFlow, openQuestions."
+        "Output keys: scopeSummary, actors, steps, decisions, exceptionFlow, openQuestions. "
+        "Each step should be an object with label and owner when possible. "
+        "Each decision should be an object with label/question, owner, and branches."
     )
     user_prompt = (
         f"Source kind: {source_kind}\n"
@@ -370,15 +406,23 @@ def _build_llm_flow_document(*, title: str, objective: str, text: str, owner: st
     if not llm_client.is_enabled(bpm_profile):
         return None
 
+    bpm_skill = _bpm_skill_instructions()
     system_prompt = (
-        "You generate OpenFlow document JSON for a process canvas. "
+        "You generate OpenFlowKit document JSON for a BPM process canvas. "
         "Return strict JSON only. "
+        f"{bpm_skill} "
         "Required top-level keys: version, engine, family, pages, metadata. "
         "Use engine='openflowkit', family='flowchart'. "
         "pages[0] must contain id, name, lanes, nodes, edges, groups, viewport. "
-        "Each node must contain id, type, label, owner, position. "
+        "Each node must contain id, type, label, owner, position, and size. "
         "Each edge must contain id, source, target, type, and optional label. "
-        "Do not invent business logic. Put missing logic in metadata.openQuestions."
+        "Use node types start, task, decision, handoff, subprocess, and end. "
+        "Layout must be left-to-right: start around x=80, then increase x by about 280 per step; "
+        "separate actors or branches vertically by at least 120px. "
+        "Decisions must have at least two labeled outgoing branches. "
+        "Keep the happy path near the top and exception/reject paths below it. "
+        "Do not invent business logic. Put missing logic in metadata.openQuestions. "
+        "Attach citations in metadata.citations and node data when evidence is available."
     )
     user_prompt = (
         f"Source kind: {source_kind}\n"
@@ -399,6 +443,56 @@ def _build_llm_flow_document(*, title: str, objective: str, text: str, owner: st
     if not isinstance(payload, dict) or not payload.get("pages"):
         return None
     return _ensure_flow_document(payload, None, title=title, objective=objective, owner=(owner or "").strip(), source_page_ids=[], source_ids=[])
+
+
+def _edge_source(edge: dict) -> str:
+    return str(edge.get("from") or edge.get("source") or "").strip()
+
+
+def _edge_target(edge: dict) -> str:
+    return str(edge.get("to") or edge.get("target") or "").strip()
+
+
+def _layout_node_positions(spec_nodes: list[dict], spec_edges: list[dict], lanes: list[dict]) -> dict[str, dict[str, int]]:
+    node_ids = [str(node.get("id")) for node in spec_nodes if node.get("id")]
+    node_id_set = set(node_ids)
+    lane_index_by_label = {
+        str(lane.get("label") or "").strip(): index
+        for index, lane in enumerate(lanes)
+        if str(lane.get("label") or "").strip()
+    }
+    depth_by_id = {node_id: 0 for node_id in node_ids}
+    edge_pairs = [
+        (_edge_source(edge), _edge_target(edge))
+        for edge in spec_edges
+        if isinstance(edge, dict) and _edge_source(edge) in node_id_set and _edge_target(edge) in node_id_set
+    ]
+
+    for _ in range(max(len(node_ids), 1)):
+        changed = False
+        for source, target in edge_pairs:
+            next_depth = min(depth_by_id[source] + 1, len(node_ids) + 1)
+            if next_depth > depth_by_id[target]:
+                depth_by_id[target] = next_depth
+                changed = True
+        if not changed:
+            break
+
+    occupied: dict[tuple[int, int], int] = {}
+    positions: dict[str, dict[str, int]] = {}
+    for fallback_index, node in enumerate(spec_nodes):
+        node_id = str(node.get("id"))
+        owner_label = str(node.get("owner") or "").strip()
+        lane_index = lane_index_by_label.get(owner_label, 0)
+        depth = depth_by_id.get(node_id, fallback_index)
+        slot = (depth, lane_index)
+        collision_index = occupied.get(slot, 0)
+        occupied[slot] = collision_index + 1
+        positions[node_id] = {
+            "x": 80 + depth * 280,
+            "y": 120 + lane_index * 160 + collision_index * 96,
+        }
+    return positions
 
 
 def _validate_generated_spec(spec_json: dict) -> dict:
@@ -455,23 +549,29 @@ def flow_document_from_spec(
     actor_labels = [str(actor.get("label") or actor.get("name") or "").strip() for actor in actors]
     actor_labels = [label for label in actor_labels if label]
     lanes = [
-        {"id": _actor_id(label), "label": label, "x": 80 + index * 300, "width": 260}
+        {"id": _actor_id(label), "label": label, "x": 0, "y": 90 + index * 160, "width": 1800, "height": 132}
         for index, label in enumerate(actor_labels or [owner or "System"])
     ]
     lane_by_label = {lane["label"]: lane for lane in lanes}
     spec_nodes = [node for node in spec_json.get("nodes", []) if isinstance(node, dict) and node.get("id")]
+    spec_edges = [item for item in spec_json.get("edges", []) if isinstance(item, dict)]
+    node_positions = _layout_node_positions(spec_nodes, spec_edges, lanes)
     nodes: list[dict] = []
     for index, node in enumerate(spec_nodes):
         node_owner = str(node.get("owner") or lanes[0]["label"]).strip()
         lane = lane_by_label.get(node_owner, lanes[0])
         node_type = str(node.get("type") or "task")
+        position = node.get("position") if isinstance(node.get("position"), dict) else node_positions.get(str(node.get("id")), {})
         nodes.append(
             {
                 "id": str(node.get("id")),
                 "type": node_type,
                 "label": str(node.get("label") or "").strip() or node_type.title(),
                 "owner": node_owner,
-                "position": {"x": int(lane["x"]), "y": 90 + index * 120},
+                "position": {
+                    "x": int(position.get("x", lane["x"])),
+                    "y": int(position.get("y", lane.get("y", 90 + index * 120))),
+                },
                 "size": {"width": 220, "height": 72},
                 "data": {
                     "citation": node.get("citation"),
@@ -480,9 +580,9 @@ def flow_document_from_spec(
             }
         )
     edges = []
-    for index, edge in enumerate([item for item in spec_json.get("edges", []) if isinstance(item, dict)]):
-        source = str(edge.get("from") or edge.get("source") or "").strip()
-        target = str(edge.get("to") or edge.get("target") or "").strip()
+    for index, edge in enumerate(spec_edges):
+        source = _edge_source(edge)
+        target = _edge_target(edge)
         if not source or not target:
             continue
         edges.append(

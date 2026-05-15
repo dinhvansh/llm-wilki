@@ -1,13 +1,14 @@
 'use client'
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react'
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Download, GitBranch, History, Plus, Save, Trash2 } from 'lucide-react'
+import { CheckCircle2, Download, ExternalLink, GitBranch, History, Plus, Save, Trash2 } from 'lucide-react'
 
 import { ErrorState } from '@/components/data-display/error-state'
 import { LoadingSpinner } from '@/components/data-display/loading-spinner'
 import { StatusBadge } from '@/components/data-display/status-badge'
 import { OpenFlowCanvas } from '@/components/diagram/openflow-canvas'
+import { OPENFLOWKIT_EMBED_URL, OpenFlowKitEmbed, type OpenFlowKitEmbedHandle } from '@/components/diagram/openflowkit-embed'
 import { PageHeader } from '@/components/layout/page-header'
 import {
   useApproveDiagramReview,
@@ -72,6 +73,8 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
   const [lastSavedAt, setLastSavedAt] = useState('')
   const [saveStatus, setSaveStatus] = useState('Loaded')
   const [liveValidation, setLiveValidation] = useState<{ isValid: boolean; warnings: string[] } | null>(null)
+  const openFlowKitRef = useRef<OpenFlowKitEmbedHandle | null>(null)
+  const useEmbeddedOpenFlowKit = Boolean(OPENFLOWKIT_EMBED_URL)
 
   useEffect(() => {
     if (!diagram) return
@@ -119,9 +122,9 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
     [diagram?.sourceIds, diagram?.sourcePageIds, objective, owner, title],
   )
 
-  const saveDraft = useCallback(async () => {
+  const persistDocument = useCallback(async (document: FlowDocument) => {
     if (!diagram) return
-    const nextDocument = syncMetadata(flowDocument)
+    const nextDocument = syncMetadata(document)
     try {
       const updated = await updateMutation.mutateAsync({
         diagramId: diagram.id,
@@ -148,7 +151,20 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
     } catch (saveError) {
       setSaveStatus(saveError instanceof Error ? saveError.message : 'Save failed')
     }
-  }, [changeSummary, collectionId, diagram, flowDocument, objective, owner, syncMetadata, title, updateMutation])
+  }, [changeSummary, collectionId, diagram, objective, owner, syncMetadata, title, updateMutation])
+
+  const saveDraft = useCallback(async () => {
+    if (useEmbeddedOpenFlowKit && openFlowKitRef.current) {
+      try {
+        const embeddedDocument = await openFlowKitRef.current.requestSave()
+        await persistDocument(embeddedDocument)
+      } catch (saveError) {
+        setSaveStatus(saveError instanceof Error ? saveError.message : 'OpenFlowKit save failed')
+      }
+      return
+    }
+    await persistDocument(flowDocument)
+  }, [flowDocument, persistDocument, useEmbeddedOpenFlowKit])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -233,6 +249,17 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
               <Save className="h-4 w-4" />
               {updateMutation.isPending ? 'Saving...' : 'Save'}
             </button>
+            {useEmbeddedOpenFlowKit ? (
+              <Link
+                href={`/diagram-flow/${diagram.slug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Open Flow Tab
+              </Link>
+            ) : null}
             <button
               onClick={async () => {
                 const result = await validateMutation.mutateAsync(diagram.id)
@@ -257,7 +284,7 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>{isDirty ? 'Unsaved changes' : 'Saved'}</span>
           <span>{saveStatus}</span>
-          <span>Engine: OpenFlow</span>
+          <span>Engine: {useEmbeddedOpenFlowKit ? 'OpenFlowKit embedded' : 'OpenFlow shell'}</span>
           <span>Version: v{diagram.currentVersion}</span>
           <span>Last saved: {lastSavedAt ? formatDateTime(lastSavedAt) : 'Not yet'}</span>
         </div>
@@ -305,7 +332,20 @@ export default function DiagramDetailPage({ params }: { params: Promise<{ slug: 
         </aside>
 
         <main className="min-h-[34rem]">
-          <OpenFlowCanvas document={flowDocument} onChange={setFlowDocument} onSelectNode={setSelectedNodeId} />
+          {useEmbeddedOpenFlowKit ? (
+            <OpenFlowKitEmbed
+              ref={openFlowKitRef}
+              diagramId={diagram.id}
+              title={title || diagram.title}
+              objective={objective}
+              owner={owner}
+              document={flowDocument}
+              onDocumentSaved={setFlowDocument}
+              onStatusChange={setSaveStatus}
+            />
+          ) : (
+            <OpenFlowCanvas document={flowDocument} onChange={setFlowDocument} onSelectNode={setSelectedNodeId} />
+          )}
         </main>
 
         <aside className="overflow-y-auto border-l border-border bg-card/60 p-4">

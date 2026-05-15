@@ -1,0 +1,4 @@
+interface:
+  display_name: "BPM Flow Designer"
+  short_description: "Traceable OpenFlowKit BPM drafts with ordered layouts."
+  default_prompt: "Use $bpm-flow-designer to turn this wiki page or source document into a clean OpenFlowKit BPM flow with ordered nodes, owners, citations, and open questions."

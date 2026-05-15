@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     const apiProxyTarget = process.env.API_PROXY_TARGET ?? "http://localhost:8000/api";
     const assetProxyTarget = apiProxyTarget.replace(/\/api\/?$/, "");
+    const openFlowKitProxyTarget = process.env.OPENFLOWKIT_PROXY_TARGET ?? "http://localhost:3045";
     return [
       {
         source: "/backend-api/:path*",
@@ -13,6 +14,14 @@ const nextConfig: NextConfig = {
       {
         source: "/backend-uploads/:path*",
         destination: `${assetProxyTarget}/uploads/:path*`,
+      },
+      {
+        source: "/openflowkit/:path*",
+        destination: `${openFlowKitProxyTarget}/:path*`,
+      },
+      {
+        source: "/openflowkit",
+        destination: openFlowKitProxyTarget,
       },
     ];
   },
