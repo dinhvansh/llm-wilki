@@ -20,6 +20,7 @@ from app.services.context_assembly import assemble_context_pack
 from app.services.evidence_policy import candidate_evidence_grade, citation_reason, select_citation_candidates
 from app.services.pages import create_page_with_version
 from app.services.permissions import can_access_collection_id
+from app.services.prompt_security import sanitize_context_text, score_prompt_risk
 from app.services.retrieval_quality_gate import evaluate_retrieval_quality
 from app.services.retrieval_candidates import retrieve_candidates
 
@@ -266,6 +267,24 @@ def _enforce_candidate_permissions(candidates: list[dict], actor) -> tuple[list[
         else:
             blocked += 1
     return allowed, blocked
+
+
+def _enforce_security_guard(candidates: list[dict]) -> tuple[list[dict], int, int]:
+    allowed: list[dict] = []
+    blocked = 0
+    flagged = 0
+    for candidate in candidates:
+        text = f"{candidate.get('text') or ''}\n{candidate.get('excerpt') or ''}"
+        risk = score_prompt_risk(text)
+        if risk["risk"] == "high":
+            blocked += 1
+            continue
+        if risk["risk"] == "medium":
+            flagged += 1
+        candidate["securityRisk"] = risk["risk"]
+        candidate["securityRiskSignals"] = risk
+        allowed.append(candidate)
+    return allowed, blocked, flagged
 
 
 def _no_answer_text(language: str) -> str:
@@ -2611,10 +2630,13 @@ def ask(
     query_embedding = _embed_query(runtime, primary_variant_query)
     candidates = _retrieve_candidates(db, runtime, interpreted, query_embedding, query_variants=query_variants, actor=actor)
     candidates, blocked_candidate_count = _enforce_candidate_permissions(candidates, actor)
+    candidates, blocked_security_count, flagged_security_count = _enforce_security_guard(candidates)
     reranked_candidates = _rerank_candidates(candidates, interpreted, limit=max(runtime.retrieval_limit * 3, 12))
     reranked_candidates, blocked_reranked_count = _enforce_candidate_permissions(reranked_candidates, actor)
+    reranked_candidates, blocked_rerank_security_count, flagged_rerank_security_count = _enforce_security_guard(reranked_candidates)
     selected_candidates, context_pack, context_coverage = _build_context_pack(reranked_candidates, interpreted, runtime.retrieval_limit)
     selected_candidates, blocked_selected_count = _enforce_candidate_permissions(selected_candidates, actor)
+    selected_candidates, blocked_selected_security_count, flagged_selected_security_count = _enforce_security_guard(selected_candidates)
     if scope_summary and selected_candidates and not _has_grounded_scope_match(selected_candidates):
         selected_candidates = []
         context_pack = []
@@ -2680,6 +2702,7 @@ def ask(
     ]
     citation_candidates = select_citation_candidates(standalone_query, interpreted, citation_pool)
     citation_candidates, blocked_citation_count = _enforce_candidate_permissions(citation_candidates, actor)
+    citation_candidates, blocked_citation_security_count, flagged_citation_security_count = _enforce_security_guard(citation_candidates)
     citations: list[dict] = []
     for index, candidate in enumerate(citation_candidates, start=1):
         payload = _build_candidate_citation(index, candidate, standalone_query)
@@ -2765,9 +2788,15 @@ def ask(
             "Do not invent facts or citations."
         )
         context_blocks = []
+        sanitized_context_lines = 0
         for item in context_pack:
             source_label = item.get("sourceId") or item.get("pageId") or item.get("candidateId")
-            context_blocks.append(f"[Role: {item['role']} | Ref: {source_label}]\n{item['text']}")
+            sanitized_text, removed = sanitize_context_text(str(item["text"]))
+            if removed:
+                sanitized_context_lines += 1
+            if not sanitized_text:
+                continue
+            context_blocks.append(f"[Role: {item['role']} | Ref: {source_label}]\n{sanitized_text}")
         user_prompt = (
             f"Original question: {question}\n"
             f"Interpreted query: {standalone_query}\n"
@@ -2783,6 +2812,8 @@ def ask(
         if llm_answer:
             answer = llm_answer.strip()
             used_llm_answer = True
+    else:
+        sanitized_context_lines = 0
     if answer_mode == ANSWER_MODE_NO_ANSWER and allow_general_fallback:
         fallback_prompt = (
             "You are providing non-official fallback guidance. "
@@ -2876,6 +2907,9 @@ def ask(
             "blockedRerankedCount": blocked_reranked_count,
             "blockedSelectedCount": blocked_selected_count,
             "blockedCitationCount": blocked_citation_count,
+            "blockedSecurityCount": blocked_security_count + blocked_rerank_security_count + blocked_selected_security_count + blocked_citation_security_count,
+            "flaggedSecurityCount": flagged_security_count + flagged_rerank_security_count + flagged_selected_security_count + flagged_citation_security_count,
+            "sanitizedContextLines": sanitized_context_lines,
             "retrievalLimit": runtime.retrieval_limit,
             "searchResultLimit": runtime.search_result_limit,
             "clarificationTriggered": False,
@@ -2927,6 +2961,22 @@ def ask(
         "answeredAt": datetime.now(timezone.utc).isoformat(),
     }
     now = datetime.now(timezone.utc)
+    total_security_blocked = blocked_security_count + blocked_rerank_security_count + blocked_selected_security_count + blocked_citation_security_count
+    if total_security_blocked > 0:
+        create_audit_log(
+            db,
+            action="ask_security_guard",
+            object_type="ask_answer",
+            object_id=response["id"][:64],
+            actor=getattr(actor, "name", None) or "Current User",
+            summary=f"Security guard blocked {total_security_blocked} risky candidates",
+            metadata={
+                "question": question[:240],
+                "blockedSecurityCount": total_security_blocked,
+                "flaggedSecurityCount": flagged_security_count + flagged_rerank_security_count + flagged_selected_security_count + flagged_citation_security_count,
+                "sessionId": session.id,
+            },
+        )
     db.add(ChatMessage(id=f"msg-{uuid4().hex[:8]}", session_id=session.id, role="user", content=question, response_json=None, created_at=now))
     db.add(ChatMessage(id=response["id"], session_id=session.id, role="assistant", content=answer, response_json=response, created_at=now))
     session.updated_at = now

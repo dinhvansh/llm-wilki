@@ -36,6 +36,7 @@ from app.models import Claim, Collection, Entity, ExtractionRun, GlossaryTerm, K
 from app.models import ReviewIssue, ReviewItem
 from app.services.pages import create_page_with_version
 from app.services.permissions import apply_collection_scope_filter, can_access_collection_id
+from app.services.prompt_security import score_prompt_risk
 from app.services.suggestions import create_source_suggestion
 
 
@@ -48,6 +49,11 @@ SOURCE_TRUST_LEVELS = {"high", "medium", "low"}
 SOURCE_STATUS_VALUES = {"draft", "approved", "archived", "superseded"}
 AUTHORITY_LEVEL_VALUES = {"official", "reference", "informal"}
 KNOWLEDGE_UNIT_TYPES = {"definition", "rule", "procedure_step", "condition", "exception", "threshold", "warning", "decision", "relationship", "example", "fact"}
+
+
+def _merge_risk(current: str, incoming: str) -> str:
+    order = {"low": 0, "medium": 1, "high": 2}
+    return incoming if order.get(incoming, 0) > order.get(current, 0) else current
 
 
 def _primary_page_type(candidates: list[dict]) -> str:
@@ -1758,9 +1764,13 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             )
 
         chunk_records: list[SourceChunk] = []
+        poison_scan_summary = {"high": 0, "medium": 0, "low": 0}
         for index, chunk in enumerate(chunks):
             embedding_vector = chunk_embeddings[index] if chunk_embeddings and index < len(chunk_embeddings) else []
             chunk_metadata = dict(chunk.get("metadata") or {})
+            risk_signals = score_prompt_risk(str(chunk.get("content") or ""))
+            risk_level = str(risk_signals.get("risk") or "low")
+            poison_scan_summary[risk_level] = poison_scan_summary.get(risk_level, 0) + 1
             heading_path = [str(part) for part in (chunk_metadata.get("headingPath") or []) if str(part).strip()]
             section_key_hint = " > ".join(heading_path) or str(chunk.get("section_title") or "Document")
             parent_section = next(
@@ -1786,6 +1796,8 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
                 embedding_id=f"emb-{uuid4().hex[:8]}" if embedding_vector else None,
                 metadata_json={
                     **chunk_metadata,
+                    "promptRisk": risk_level,
+                    "promptRiskSignals": risk_signals,
                     "keywords": tags[:6],
                     "language": parsed.metadata.get("language"),
                     "parentSectionKey": parent_section.get("sectionKey") if parent_section else None,
@@ -1802,6 +1814,16 @@ def ingest_source(db: Session, source_id: str) -> dict | None:
             db.add(record)
             db.flush()
             chunk_records.append(record)
+
+        source_risk = "high" if poison_scan_summary.get("high", 0) > 0 else "medium" if poison_scan_summary.get("medium", 0) > 0 else "low"
+        source.metadata_json = {
+            **(source.metadata_json or {}),
+            "poisonScan": {
+                "chunkRisk": poison_scan_summary,
+                "sourceRisk": source_risk,
+                "scannedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }
 
         claim_records: list[tuple[Claim, SourceChunk]] = []
         for claim_payload in generated_claims:
