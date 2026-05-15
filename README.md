@@ -222,6 +222,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 - Source freshness policy with stale-source warnings and re-index queue
 - Authority governance: explicit source ranking rules and policy conflict workflows
 - Coverage mapping from business questions to evidence gaps
+- Enterprise cloud sync: SharePoint, OneDrive, Google Drive ingestion and scheduled delta sync
+- Connector governance: per-connector auth scope, folder/site allowlist, and sync audit trail
 
 ### Phase D - UX and Workflow Productivity
 
@@ -234,3 +236,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 - One-command production profile with hardened defaults
 - Observability pack (latency, retrieval quality, hallucination risk, queue health)
 - Backup/restore and disaster-recovery validation as scheduled CI jobs
+
+### Phase F - Cloud Connector Delivery (SharePoint / OneDrive / Google Drive)
+
+- Connector framework:
+  - unified connector interface (`list`, `fetch`, `delta`, `webhook`)
+  - per-tenant credential vault + token refresh handling
+- SharePoint / OneDrive:
+  - Microsoft Graph integration for site, drive, folder, file sync
+  - incremental sync using delta tokens
+  - permission-aware indexing by user/group scope
+- Google Drive:
+  - Drive API integration for shared drives and folders
+  - incremental sync using changes feed / page tokens
+  - file-type mapping (Docs/Sheets/Slides export + binary files)
+- Sync operations:
+  - scheduled jobs + manual sync trigger
+  - conflict handling, retries, dead-letter queue for failed files
+  - sync status UI: last run, items changed, errors
+- Security and compliance:
+  - least-privilege OAuth scopes
+  - encrypted connector secrets
+  - audit logs for sync actions and data access
