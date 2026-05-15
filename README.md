@@ -202,3 +202,35 @@ powershell -ExecutionPolicy Bypass -File .\scripts\e2e_smoke.ps1
 - Upgrade roadmap: [docs/upgrade-roadmap-2026.md](docs/upgrade-roadmap-2026.md)
 - Quality checklist: [docs/QUALITY_RELEASE_CHECKLIST.md](docs/QUALITY_RELEASE_CHECKLIST.md)
 - Production checklist: [docs/PRODUCTION_RELEASE_CHECKLIST.md](docs/PRODUCTION_RELEASE_CHECKLIST.md)
+
+## 11) Future Roadmap
+
+### Phase A - Retrieval and Answer Quality
+
+- Add richer query rewrite (domain synonyms, acronym expansion, multilingual normalization)
+- Introduce reranker calibration by intent and collection type
+- Add answer-level policy scoring dashboard for no-answer/partial-answer rates
+
+### Phase B - Evaluation and Guardrails
+
+- Build a maintained golden dataset per domain (policy, SOP, engineering, legal)
+- Add automated nightly eval runs with trend reports
+- Add stricter verifier checks for numeric/date/entity drift
+
+### Phase C - Knowledge Operations
+
+- Source freshness policy with stale-source warnings and re-index queue
+- Authority governance: explicit source ranking rules and policy conflict workflows
+- Coverage mapping from business questions to evidence gaps
+
+### Phase D - UX and Workflow Productivity
+
+- Guided Ask follow-ups based on unresolved evidence gaps
+- One-click escalation from Ask result to review task
+- Better scoped Ask flows for page/source/collection context switching
+
+### Phase E - Platform and Deployment
+
+- One-command production profile with hardened defaults
+- Observability pack (latency, retrieval quality, hallucination risk, queue health)
+- Backup/restore and disaster-recovery validation as scheduled CI jobs
